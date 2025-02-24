@@ -11,7 +11,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Vendor Restic
+      - name: Install Restic
+        run: |
+          sudo apt-get update
+          sudo apt-get install restic
+
+      - name: Vendor Restic source
         run: |
           ./vendor-restic.sh
 
