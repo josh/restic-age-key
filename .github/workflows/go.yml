@@ -16,10 +16,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install age restic rclone
 
-      - name: Vendor Restic source
-        run: |
-          ./vendor-restic.sh
-
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
