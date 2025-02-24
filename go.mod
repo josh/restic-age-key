@@ -2,10 +2,8 @@ module github.com/josh/restic-age-key
 
 go 1.24.0
 
-replace github.com/restic/restic v0.17.3 => ./external/restic
-
 require (
-	github.com/restic/restic v0.17.3
+	github.com/josh/restic-api v0.17.3
 	github.com/rogpeppe/go-internal v1.13.1
 	github.com/spf13/cobra v1.8.1
 )

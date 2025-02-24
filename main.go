@@ -12,15 +12,15 @@ import (
 	"os/user"
 	"time"
 
-	"github.com/restic/restic/public/backend"
-	"github.com/restic/restic/public/backend/limiter"
-	"github.com/restic/restic/public/backend/local"
-	"github.com/restic/restic/public/backend/location"
-	"github.com/restic/restic/public/backend/rclone"
-	"github.com/restic/restic/public/backend/rest"
-	"github.com/restic/restic/public/crypto"
-	"github.com/restic/restic/public/repository"
-	"github.com/restic/restic/public/restic"
+	"github.com/josh/restic-api/api/backend"
+	"github.com/josh/restic-api/api/backend/limiter"
+	"github.com/josh/restic-api/api/backend/local"
+	"github.com/josh/restic-api/api/backend/location"
+	"github.com/josh/restic-api/api/backend/rclone"
+	"github.com/josh/restic-api/api/backend/rest"
+	"github.com/josh/restic-api/api/crypto"
+	"github.com/josh/restic-api/api/repository"
+	"github.com/josh/restic-api/api/restic"
 	"github.com/spf13/cobra"
 )
 
@@ -57,7 +57,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runKeyList(cmd.Context(), options, args)
 		},
-		SilenceUsage: true,
+		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
 	addCommand := &cobra.Command{
