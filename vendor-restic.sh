@@ -15,8 +15,8 @@ pushd external/restic
 mv internal/ public/
 
 pattern="s|github.com/restic/restic/internal|github.com/restic/restic/public|g"
-if [[ "$OSTYPE" == "darwin"* ]]; then
-	find . -type f -name "*.go" -exec sed -i '' "$pattern" {} +
+if [[ $OSTYPE == "darwin"* ]]; then
+  find . -type f -name "*.go" -exec sed -i '' "$pattern" {} +
 else
-	find . -type f -name "*.go" -exec sed -i "$pattern" {} +
+  find . -type f -name "*.go" -exec sed -i "$pattern" {} +
 fi

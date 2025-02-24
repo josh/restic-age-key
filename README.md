@@ -22,7 +22,6 @@ restic-age-key add \
   --pubkey age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
 ```
 
-
 Add subsequent age keys using another age key:
 
 ```sh
