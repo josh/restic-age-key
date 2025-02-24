@@ -1,0 +1,7 @@
+! exec restic key list
+! stdout .
+stderr 'Fatal: Please specify repository location \(-r or --repository-file\)'
+
+! exec restic-age-key list
+! stdout .
+stderr 'Fatal: Please specify repository location \(-r or --repository-file\)'

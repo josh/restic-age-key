@@ -57,6 +57,8 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runKeyList(cmd.Context(), options, args)
 		},
+		SilenceUsage: true,
+		SilenceErrors: true,
 	}
 	addCommand := &cobra.Command{
 		Use:   "add",
@@ -119,6 +121,11 @@ type AgeKey struct {
 }
 
 func runKeyList(ctx context.Context, opts options, args []string) error {
+	if opts.repo == "" {
+		fmt.Fprintf(os.Stderr, "Fatal: Please specify repository location (-r or --repository-file)\n")
+		return fmt.Errorf("repository not specified")
+	}
+
 	repo, _, err := openRepository(ctx, opts.repo)
 	if err != nil {
 		return err
