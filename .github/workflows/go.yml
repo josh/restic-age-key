@@ -11,10 +11,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Restic
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install restic
+          sudo apt-get install age restic
 
       - name: Vendor Restic source
         run: |
