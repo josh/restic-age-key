@@ -17,5 +17,6 @@ func TestScript(t *testing.T) {
 	testscript.Run(t, testscript.Params{
 		Dir:             "testdata",
 		ContinueOnError: true,
+		UpdateScripts:   os.Getenv("CI") != "1",
 	})
 }
