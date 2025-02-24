@@ -84,15 +84,18 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 
 func Main() int {
 	ctx := context.Background()
+
 	err := newRootCommand().ExecuteContext(ctx)
 	if err != nil {
 		return 1
 	}
+
 	return 0
 }
 
 func main() {
 	ctx := context.Background()
+
 	err := newRootCommand().ExecuteContext(ctx)
 	if err != nil {
 		os.Exit(1)
@@ -128,6 +131,7 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 		}
 
 		k := &AgeKey{}
+
 		err = json.Unmarshal(data, k)
 		if err != nil {
 			return err
@@ -138,9 +142,9 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 		}
 
 		fmt.Printf("age publey: %v\n", k.AgePubkey)
+
 		return nil
 	})
-
 	if err != nil {
 		return err
 	}
@@ -184,6 +188,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	if err != nil {
 		return err
 	}
+
 	newkey.AgePubkey = opts.recipient
 	newkey.AgeData = ageData
 
@@ -236,6 +241,7 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 		}
 
 		k := &AgeKey{}
+
 		err = json.Unmarshal(data, k)
 		if err != nil {
 			return err
@@ -249,11 +255,11 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 		if err != nil {
 			return err
 		}
+
 		fmt.Println(string(password))
 
 		return nil
 	})
-
 	if err != nil {
 		return err
 	}
