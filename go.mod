@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	github.com/josh/restic-api v0.17.3
 	github.com/rogpeppe/go-internal v1.14.0
-	github.com/spf13/cobra v1.8.1
+	github.com/spf13/cobra v1.9.1
 )
 
 require (
