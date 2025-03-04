@@ -25,18 +25,20 @@ import (
 )
 
 type options struct {
-	repo         string
-	password     string
-	identityFile string
-	recipient    string
+	repo            string
+	password        string
+	identityFile    string
+	identityCommand string
+	recipient       string
 }
 
 func newRootCommand() *cobra.Command {
 	options := options{
-		repo:         os.Getenv("RESTIC_REPOSITORY"),
-		password:     os.Getenv("RESTIC_PASSWORD"),
-		identityFile: os.Getenv("RESTIC_AGE_IDENTITY_FILE"),
-		recipient:    os.Getenv("RESTIC_AGE_RECIPIENT"),
+		repo:            os.Getenv("RESTIC_REPOSITORY"),
+		password:        os.Getenv("RESTIC_PASSWORD"),
+		identityFile:    os.Getenv("RESTIC_AGE_IDENTITY_FILE"),
+		identityCommand: os.Getenv("RESTIC_AGE_IDENTITY_COMMAND"),
+		recipient:       os.Getenv("RESTIC_AGE_RECIPIENT"),
 	}
 
 	cmd := &cobra.Command{
@@ -49,6 +51,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	cmd.PersistentFlags().StringVarP(&options.repo, "repo", "r", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
 	cmd.PersistentFlags().StringVarP(&options.password, "password", "p", options.password, "restic repository password (env: RESTIC_PASSWORD)")
 	cmd.PersistentFlags().StringVarP(&options.identityFile, "identity-file", "i", options.identityFile, "age identity file (env: RESTIC_AGE_IDENTITY_FILE)")
+	cmd.PersistentFlags().StringVar(&options.identityCommand, "identity-command", options.identityCommand, "age identity command (env: RESTIC_AGE_IDENTITY_COMMAND)")
 	cmd.PersistentFlags().StringVarP(&options.recipient, "recipient", "R", options.recipient, "age recipient public key (env: RESTIC_AGE_RECIPIENT)")
 
 	listCommand := &cobra.Command{
@@ -241,6 +244,12 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 		return err
 	}
 
+	closeIdentityCommand, err := readIdentityCommand(&opts)
+	if err != nil {
+		return err
+	}
+	defer closeIdentityCommand()
+
 	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
 		data, err := repo.LoadRaw(ctx, restic.KeyFile, id)
 		if err != nil {
@@ -301,6 +310,60 @@ func ageDecryptKey(identityFile string, key []byte) (string, error) {
 	}
 
 	return hex.EncodeToString(out), nil
+}
+
+func readIdentityCommand(opts *options) (func(), error) {
+	noop := func() {}
+
+	if opts.identityCommand == "" {
+		return noop, nil
+	}
+
+	if opts.identityFile != "" {
+		fmt.Fprintf(os.Stderr, "warn: ignoring identity-command, identity-file already set\n")
+		return noop, nil
+	}
+
+	args, err := backend.SplitShellStrings(opts.identityCommand)
+	if err != nil {
+		return noop, err
+	}
+
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stderr = os.Stderr
+	output, err := cmd.Output()
+	if err != nil {
+		return noop, err
+	}
+
+	filename, closeCallback, err := writeTempFile("identity-*", output)
+	if err != nil {
+		return closeCallback, err
+	}
+
+	opts.identityFile = filename
+	return closeCallback, nil
+}
+
+func writeTempFile(pattern string, data []byte) (string, func(), error) {
+	tmpFile, err := os.CreateTemp("", pattern)
+	if err != nil {
+		return "", nil, err
+	}
+
+	closeCallback := func() {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+	}
+
+	_, err = tmpFile.Write(data)
+	if err != nil {
+		closeCallback()
+		return "", nil, err
+	}
+
+	return tmpFile.Name(), closeCallback, nil
+
 }
 
 func openRepository(ctx context.Context, repo string) (*repository.Repository, backend.Backend, error) {
