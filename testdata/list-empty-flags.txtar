@@ -1,0 +1,12 @@
+exec restic init --repo $WORK/repo --password-file $WORK/password.txt
+
+exec restic key list --no-cache --repo $WORK/repo --password-file $WORK/password.txt
+stdout \*[a-f0-9]{8}
+! stderr .
+
+exec restic-age-key list --repo $WORK/repo
+! stdout .
+! stderr .
+
+-- password.txt --
+secret
