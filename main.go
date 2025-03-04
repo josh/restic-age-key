@@ -27,6 +27,8 @@ import (
 type options struct {
 	repo            string
 	password        string
+	passwordFile    string
+	passwordCommand string
 	identityFile    string
 	identityCommand string
 	recipient       string
@@ -36,6 +38,8 @@ func newRootCommand() *cobra.Command {
 	options := options{
 		repo:            os.Getenv("RESTIC_REPOSITORY"),
 		password:        os.Getenv("RESTIC_PASSWORD"),
+		passwordFile:    os.Getenv("RESTIC_PASSWORD_FILE"),
+		passwordCommand: os.Getenv("RESTIC_PASSWORD_COMMAND"),
 		identityFile:    os.Getenv("RESTIC_AGE_IDENTITY_FILE"),
 		identityCommand: os.Getenv("RESTIC_AGE_IDENTITY_COMMAND"),
 		recipient:       os.Getenv("RESTIC_AGE_RECIPIENT"),
@@ -50,6 +54,8 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 
 	cmd.PersistentFlags().StringVarP(&options.repo, "repo", "r", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
 	cmd.PersistentFlags().StringVarP(&options.password, "password", "p", options.password, "restic repository password (env: RESTIC_PASSWORD)")
+	cmd.PersistentFlags().StringVarP(&options.passwordFile, "password-file", "P", options.passwordFile, "restic repository password file (env: RESTIC_PASSWORD_FILE)")
+	cmd.PersistentFlags().StringVarP(&options.passwordCommand, "password-command", "C", options.passwordCommand, "restic repository password command (env: RESTIC_PASSWORD_COMMAND)")
 	cmd.PersistentFlags().StringVarP(&options.identityFile, "identity-file", "i", options.identityFile, "age identity file (env: RESTIC_AGE_IDENTITY_FILE)")
 	cmd.PersistentFlags().StringVar(&options.identityCommand, "identity-command", options.identityCommand, "age identity command (env: RESTIC_AGE_IDENTITY_COMMAND)")
 	cmd.PersistentFlags().StringVarP(&options.recipient, "recipient", "R", options.recipient, "age recipient public key (env: RESTIC_AGE_RECIPIENT)")
