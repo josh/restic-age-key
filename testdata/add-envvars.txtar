@@ -1,13 +1,17 @@
-exec restic init --repo $WORK/repo --password-file $WORK/password.txt
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+env RESTIC_AGE_RECIPIENT=age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
 
-exec restic-age-key list --repo $WORK/repo
+exec restic init
+
+exec restic-age-key list
 ! stdout .
 ! stderr .
 
-exec restic-age-key add --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+exec restic-age-key add
 ! stderr .
 
-exec restic-age-key list --repo $WORK/repo
+exec restic-age-key list
 stdout age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
 ! stderr .
 

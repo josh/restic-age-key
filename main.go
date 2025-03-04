@@ -6,10 +6,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
+	"strings"
 	"time"
 
 	"github.com/josh/restic-api/api/backend"
@@ -21,6 +23,7 @@ import (
 	"github.com/josh/restic-api/api/crypto"
 	"github.com/josh/restic-api/api/repository"
 	"github.com/josh/restic-api/api/restic"
+	"github.com/josh/restic-api/api/textfile"
 	"github.com/spf13/cobra"
 )
 
@@ -133,7 +136,7 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 		os.Exit(1)
 	}
 
-	repo, _, err := openRepository(ctx, opts.repo)
+	repo, _, err := openRepository(ctx, opts)
 	if err != nil {
 		return err
 	}
@@ -167,7 +170,16 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 }
 
 func runKeyAdd(ctx context.Context, opts options, args []string) error {
-	repo, be, err := openRepository(ctx, opts.repo)
+	repo, be, err := openRepository(ctx, opts)
+	if err != nil {
+		return err
+	}
+
+	password, err := readPassword(&opts)
+	if err != nil {
+		return err
+	}
+	err = repo.SearchKey(ctx, password, 20, "")
 	if err != nil {
 		return err
 	}
@@ -211,6 +223,10 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		return err
 	}
 
+	if repo.Key() == nil {
+		return errors.New("repo master key not loaded")
+	}
+
 	buf, err := json.Marshal(repo.Key())
 	if err != nil {
 		return err
@@ -243,7 +259,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 
 // Decrypt age-data using age identity and print out string representation as it's the password.
 func runKeyPassword(ctx context.Context, opts options, args []string) error {
-	repo, _, err := openRepository(ctx, opts.repo)
+	repo, _, err := openRepository(ctx, opts)
 	if err != nil {
 		return err
 	}
@@ -367,16 +383,50 @@ func writeTempFile(pattern string, data []byte) (string, func(), error) {
 	}
 
 	return tmpFile.Name(), closeCallback, nil
-
 }
 
-func openRepository(ctx context.Context, repo string) (*repository.Repository, backend.Backend, error) {
+func readPassword(opts *options) (string, error) {
+	if opts.password != "" {
+		return opts.password, nil
+	} else if opts.passwordFile != "" {
+		s, err := textfile.Read(opts.passwordFile)
+		if errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		password := strings.TrimSpace(string(s))
+		if password == "" {
+			return "", errors.New("empty password file")
+		}
+		return password, nil
+
+	} else if opts.passwordCommand != "" {
+		args, err := backend.SplitShellStrings(opts.passwordCommand)
+		if err != nil {
+			return "", err
+		}
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Stderr = os.Stderr
+		output, err := cmd.Output()
+		if err != nil {
+			return "", err
+		}
+		password := strings.TrimSpace(string(output))
+		if password == "" {
+			return "", errors.New("empty password command output")
+		}
+		return password, nil
+	} else {
+		return "", errors.New("no password given")
+	}
+}
+
+func openRepository(ctx context.Context, opts options) (*repository.Repository, backend.Backend, error) {
 	backends := location.NewRegistry()
 	backends.Register(local.NewFactory())
 	backends.Register(rclone.NewFactory())
 	backends.Register(rest.NewFactory())
 
-	loc, err := location.Parse(backends, repo)
+	loc, err := location.Parse(backends, opts.repo)
 	if err != nil {
 		return nil, nil, err
 	}
