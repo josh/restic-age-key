@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -210,7 +209,11 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		return err
 	}
 
-	password, ageData, err := ageEncryptRandomKey(opts.recipient)
+	if repo.Key() == nil {
+		return errors.New("repo master key not loaded")
+	}
+
+	password, ageData, err := ageEncryptMasterKey(opts.recipient, repo.Key())
 	if err != nil {
 		return err
 	}
@@ -221,10 +224,6 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	user, err := crypto.KDF(params, newkey.Salt, password)
 	if err != nil {
 		return err
-	}
-
-	if repo.Key() == nil {
-		return errors.New("repo master key not loaded")
 	}
 
 	buf, err := json.Marshal(repo.Key())
@@ -303,21 +302,21 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 	return nil
 }
 
-func ageEncryptRandomKey(pubkey string) (string, []byte, error) {
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return "", nil, err
+func ageEncryptMasterKey(pubkey string, masterKey *crypto.Key) (string, []byte, error) {
+	if len(masterKey.EncryptionKey) != 32 {
+		panic("master key is not 32 bytes")
 	}
+	keyBytes := masterKey.EncryptionKey[:]
 
 	cmd := exec.Command("age", "--encrypt", "--recipient", pubkey)
-	cmd.Stdin = bytes.NewReader(key)
+	cmd.Stdin = bytes.NewReader(keyBytes)
 
 	out, err := cmd.Output()
 	if err != nil {
 		return "", nil, err
 	}
 
-	return hex.EncodeToString(key), out, nil
+	return hex.EncodeToString(keyBytes), out, nil
 }
 
 func ageDecryptKey(identityFile string, key []byte) (string, error) {
