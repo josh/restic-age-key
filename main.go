@@ -395,5 +395,11 @@ func openRepository(ctx context.Context, repo string) (*repository.Repository, b
 		return nil, nil, err
 	}
 
+	_, err = be.Stat(ctx, backend.Handle{Type: restic.ConfigFile})
+	if be.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Fatal: repository does not exist: unable to open config file\n")
+		os.Exit(1)
+	}
+
 	return r, be, nil
 }
