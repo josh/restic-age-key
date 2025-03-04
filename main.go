@@ -148,7 +148,7 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 			return nil
 		}
 
-		fmt.Printf("age publey: %v\n", k.AgePubkey)
+		fmt.Printf("age pubkey: %v\n", k.AgePubkey)
 
 		return nil
 	})
