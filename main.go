@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
@@ -36,6 +37,7 @@ type options struct {
 	recipient       string
 	host            string
 	user            string
+	output          string
 }
 
 func newRootCommand() *cobra.Command {
@@ -89,6 +91,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 			return runKeyPassword(cmd.Context(), options, args)
 		},
 	}
+	passwordCommand.Flags().StringVar(&options.output, "output", "", "output file to write password to")
 
 	cmd.AddCommand(
 		listCommand,
@@ -288,7 +291,24 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 	}
 	defer closeIdentityCommand()
 
+	var output io.Writer = os.Stdout
+
+	if opts.output != "" {
+		file, err := os.OpenFile(opts.output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		output = file
+	}
+
+	passwordFound := false
+
 	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
+		if passwordFound {
+			return nil
+		}
+
 		data, err := repo.LoadRaw(ctx, restic.KeyFile, id)
 		if err != nil {
 			return nil
@@ -310,12 +330,20 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 			return err
 		}
 
-		fmt.Println(string(password))
+		_, err = io.WriteString(output, password)
+		if err != nil {
+			return err
+		}
 
+		passwordFound = true
 		return nil
 	})
 	if err != nil {
 		return err
+	}
+
+	if !passwordFound {
+		return fmt.Errorf("no password found")
 	}
 
 	return nil
