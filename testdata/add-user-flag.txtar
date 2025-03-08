@@ -1,0 +1,15 @@
+exec restic init --repo $WORK/repo --password-file $WORK/password.txt
+
+exec restic-age-key list --repo $WORK/repo
+! stdout .
+! stderr .
+
+exec restic-age-key add --repo $WORK/repo --password-file $WORK/password.txt --user custom-user --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+! stderr .
+
+exec restic key list --no-cache --repo $WORK/repo --password-file $WORK/password.txt
+stdout 'custom-user'
+! stderr .
+
+-- password.txt --
+secret

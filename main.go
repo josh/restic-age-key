@@ -35,6 +35,7 @@ type options struct {
 	identityCommand string
 	recipient       string
 	host            string
+	user            string
 }
 
 func newRootCommand() *cobra.Command {
@@ -79,6 +80,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		},
 	}
 	addCommand.Flags().StringVar(&options.host, "host", "", "the hostname for new key")
+	addCommand.Flags().StringVar(&options.user, "user", "", "the username for new key")
 
 	passwordCommand := &cobra.Command{
 		Use:   "password",
@@ -201,7 +203,9 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		P: params.P,
 	}
 
-	newkey.Hostname, _ = os.Hostname()
+	if hostname, err := os.Hostname(); err == nil {
+		newkey.Hostname = hostname
+	}
 	if opts.host != "" {
 		newkey.Hostname = opts.host
 	}
@@ -209,9 +213,14 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		return errors.New("hostname is empty")
 	}
 
-	usr, err := user.Current()
-	if err == nil {
-		newkey.Username = usr.Username
+	if user, err := user.Current(); err == nil {
+		newkey.Username = user.Username
+	}
+	if opts.user != "" {
+		newkey.Username = opts.user
+	}
+	if newkey.Username == "" {
+		return errors.New("username is empty")
 	}
 
 	newkey.Salt, err = crypto.NewSalt()
