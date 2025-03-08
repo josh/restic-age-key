@@ -34,6 +34,7 @@ type options struct {
 	identityFile    string
 	identityCommand string
 	recipient       string
+	host            string
 }
 
 func newRootCommand() *cobra.Command {
@@ -69,6 +70,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 			return runKeyList(cmd.Context(), options, args)
 		},
 	}
+
 	addCommand := &cobra.Command{
 		Use:   "add",
 		Short: "Add a new key to the repository",
@@ -76,6 +78,8 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 			return runKeyAdd(cmd.Context(), options, args)
 		},
 	}
+	addCommand.Flags().StringVar(&options.host, "host", "", "the hostname for new key")
+
 	passwordCommand := &cobra.Command{
 		Use:   "password",
 		Short: "Retrieve the password for a key",
@@ -198,6 +202,12 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	}
 
 	newkey.Hostname, _ = os.Hostname()
+	if opts.host != "" {
+		newkey.Hostname = opts.host
+	}
+	if newkey.Hostname == "" {
+		return errors.New("hostname is empty")
+	}
 
 	usr, err := user.Current()
 	if err == nil {
