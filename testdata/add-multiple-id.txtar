@@ -1,0 +1,50 @@
+env RESTIC_REPOSITORY=$WORK/repo
+
+exec restic init --password-file $WORK/password.txt
+
+exec restic-age-key add --password-file $WORK/password.txt --recipient age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4 --output keyid-a.txt
+! stdout .
+! stderr .
+
+exec cat keyid-a.txt
+stdout [a-f0-9]{64}
+
+exec restic-age-key add --password-file $WORK/password.txt --recipient age1ljvnfh04dyagjkpt6z8zrgw3vlthhy4g0vtug709gmh764rj2vgqdx84qr --output keyid-b.txt
+! stdout .
+! stderr .
+
+exec cat keyid-b.txt
+stdout [a-f0-9]{64}
+
+exec bash restic-key-count.bash
+stdout 3
+! stderr .
+
+exec restic-age-key password --identity-file key-a.txt --output password-a.txt
+! stdout .
+! stderr .
+
+exec restic-age-key password --identity-file key-b.txt --output password-b.txt
+! stdout .
+! stderr .
+
+exec bash restic-current-keyid.bash password-a.txt
+cmp stdout keyid-a.txt
+
+exec bash restic-current-keyid.bash password-b.txt
+cmp stdout keyid-b.txt
+
+-- restic-key-count.bash --
+restic key list --password-file password.txt --no-cache --json | jq length
+
+-- restic-current-keyid.bash --
+restic key list --no-cache --password-file "$1" --json | jq --raw-output '.[] | select(.current) | .id'
+
+-- password.txt --
+secret
+
+-- key-a.txt --
+AGE-SECRET-KEY-1VYLVW0ECH8CVFEKQUSDCSWR6URU6ZWVFH245PHW5TSSE9V676DTSFHL5E7
+
+-- key-b.txt --
+AGE-SECRET-KEY-1GSCR445N7JFSESARCN42GDQ4LLD8TJHF8MQW9594ZNKJXXSLJ2RQ5EM8VP

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -83,6 +84,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	}
 	addCommand.Flags().StringVar(&options.host, "host", "", "the hostname for new key")
 	addCommand.Flags().StringVar(&options.user, "user", "", "the username for new key")
+	addCommand.Flags().StringVar(&options.output, "output", "", "output file to write key id to")
 
 	passwordCommand := &cobra.Command{
 		Use:   "password",
@@ -231,11 +233,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		return err
 	}
 
-	if repo.Key() == nil {
-		return errors.New("repo master key not loaded")
-	}
-
-	password, ageData, err := ageEncryptMasterKey(opts.recipient, repo.Key())
+	password, ageData, err := ageEncryptRandomKey(opts.recipient)
 	if err != nil {
 		return err
 	}
@@ -246,6 +244,10 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	user, err := crypto.KDF(params, newkey.Salt, password)
 	if err != nil {
 		return err
+	}
+
+	if repo.Key() == nil {
+		return errors.New("repo master key not loaded")
 	}
 
 	buf, err := json.Marshal(repo.Key())
@@ -273,6 +275,19 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	err = be.Save(ctx, h, backend.NewByteReader(buf, be.Hasher()))
 	if err != nil {
 		return err
+	}
+
+	if opts.output != "" {
+		file, err := os.OpenFile(opts.output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		_, err = file.WriteString(id.String() + "\n")
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -318,7 +333,7 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 
 		err = json.Unmarshal(data, k)
 		if err != nil {
-			return err
+			return nil
 		}
 
 		if k.AgePubkey == "" {
@@ -327,10 +342,10 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 
 		password, err := ageDecryptKey(opts.identityFile, k.AgeData)
 		if err != nil {
-			return err
+			return nil
 		}
 
-		_, err = io.WriteString(output, password)
+		_, err = io.WriteString(output, password+"\n")
 		if err != nil {
 			return err
 		}
@@ -349,21 +364,21 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 	return nil
 }
 
-func ageEncryptMasterKey(pubkey string, masterKey *crypto.Key) (string, []byte, error) {
-	if len(masterKey.EncryptionKey) != 32 {
-		panic("master key is not 32 bytes")
+func ageEncryptRandomKey(pubkey string) (string, []byte, error) {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return "", nil, err
 	}
-	keyBytes := masterKey.EncryptionKey[:]
 
 	cmd := exec.Command("age", "--encrypt", "--recipient", pubkey)
-	cmd.Stdin = bytes.NewReader(keyBytes)
+	cmd.Stdin = bytes.NewReader(key)
 
 	out, err := cmd.Output()
 	if err != nil {
 		return "", nil, err
 	}
 
-	return hex.EncodeToString(keyBytes), out, nil
+	return hex.EncodeToString(key), out, nil
 }
 
 func ageDecryptKey(identityFile string, key []byte) (string, error) {
