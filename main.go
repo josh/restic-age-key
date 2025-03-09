@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"os/user"
@@ -187,8 +186,14 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 
 	password, err := readPassword(&opts)
 	if err != nil {
-		return err
+		if opts.identityFile != "" || opts.identityCommand != "" {
+			password, err = readPasswordViaIdentity(ctx, opts)
+		}
+		if err != nil {
+			return err
+		}
 	}
+
 	err = repo.SearchKey(ctx, password, 20, "")
 	if err != nil {
 		return err
@@ -293,20 +298,11 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	return nil
 }
 
-// Decrypt age-data using age identity and print out string representation as it's the password.
 func runKeyPassword(ctx context.Context, opts options, args []string) error {
-	repo, _, err := openRepository(ctx, opts)
+	password, err := readPasswordViaIdentity(ctx, opts)
 	if err != nil {
 		return err
 	}
-
-	closeIdentityCommand, err := readIdentityCommand(&opts)
-	if err != nil {
-		return err
-	}
-	defer closeIdentityCommand()
-
-	var output io.Writer = os.Stdout
 
 	if opts.output != "" {
 		file, err := os.OpenFile(opts.output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
@@ -314,13 +310,30 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 			return err
 		}
 		defer file.Close()
-		output = file
+		file.WriteString(password + "\n")
+	} else {
+		fmt.Printf("%s\n", password)
 	}
 
-	passwordFound := false
+	return nil
+}
+
+func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) {
+	repo, _, err := openRepository(ctx, opts)
+	if err != nil {
+		return "", err
+	}
+
+	closeIdentityCommand, err := readIdentityCommand(&opts)
+	if err != nil {
+		return "", err
+	}
+	defer closeIdentityCommand()
+
+	var password string
 
 	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
-		if passwordFound {
+		if password != "" {
 			return nil
 		}
 
@@ -340,28 +353,23 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 			return nil
 		}
 
-		password, err := ageDecryptKey(opts.identityFile, k.AgeData)
+		password, err = ageDecryptKey(opts.identityFile, k.AgeData)
 		if err != nil {
 			return nil
 		}
 
-		_, err = io.WriteString(output, password+"\n")
-		if err != nil {
-			return err
-		}
-
-		passwordFound = true
 		return nil
 	})
+
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	if !passwordFound {
-		return fmt.Errorf("no password found")
+	if password == "" {
+		return "", fmt.Errorf("no password found")
 	}
 
-	return nil
+	return password, nil
 }
 
 func ageEncryptRandomKey(pubkey string) (string, []byte, error) {

@@ -1,0 +1,30 @@
+env RESTIC_REPOSITORY=$WORK/repo
+
+exec restic init --password-file $WORK/password.txt
+
+exec restic-age-key list
+! stdout .
+! stderr .
+
+exec restic-age-key add --password-file $WORK/password.txt --recipient age1a2jgs9svf78df0tkk035uk0w7zrw670tr92kz4azrekydg277flswlk8p6
+! stderr .
+
+exec bash restic-key-count.bash
+stdout 2
+! stderr .
+
+exec restic-age-key add --identity-command 'cat key.txt' --recipient age1prqncjmv79use2pqj46hch93u48uk52utwgc903wnatekhgxt90q9udpwn
+! stderr .
+
+exec bash restic-key-count.bash
+stdout 3
+! stderr .
+
+-- restic-key-count.bash --
+restic key list --password-file password.txt --no-cache --json | jq length
+
+-- password.txt --
+secret
+
+-- key.txt --
+AGE-SECRET-KEY-15LJ4645Z6DFNUEUJEQNQEV4VHD0N8HXGPFVC93N2ZDTLZQY6SPSSZR7SKH
