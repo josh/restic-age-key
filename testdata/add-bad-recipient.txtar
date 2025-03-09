@@ -1,0 +1,19 @@
+exec restic init --repo $WORK/repo --password-file $WORK/password.txt
+
+! exec age --encrypt --recipient age1foo
+! stdout .
+cmp stderr age-stderr.txt
+
+! exec restic-age-key add --repo $WORK/repo --password-file $WORK/password.txt --recipient age1foo
+! stdout .
+cmp stderr restic-age-key-stderr.txt
+
+-- age-stderr.txt --
+age: error: malformed recipient "age1foo": separator '1' at invalid position: pos=3, len=7
+age: report unexpected or unhelpful errors at https://filippo.io/age/report
+-- restic-age-key-stderr.txt --
+age: error: malformed recipient "age1foo": separator '1' at invalid position: pos=3, len=7
+age: report unexpected or unhelpful errors at https://filippo.io/age/report
+
+-- password.txt --
+secret

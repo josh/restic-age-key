@@ -56,6 +56,8 @@ func newRootCommand() *cobra.Command {
 		Short: "Manage age-based encryption keys for restic repositories",
 		Long: `restic-age-key allows you to manage age-based encryption keys for restic repositories.
 It supports listing existing keys, adding new keys, and retrieving passwords.`,
+		SilenceErrors: true,
+		SilenceUsage:  true,
 	}
 
 	cmd.PersistentFlags().StringVarP(&options.repo, "repo", "r", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
@@ -104,23 +106,16 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 }
 
 func Main() int {
-	ctx := context.Background()
-
-	err := newRootCommand().ExecuteContext(ctx)
+	err := newRootCommand().Execute()
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
 	}
-
 	return 0
 }
 
 func main() {
-	ctx := context.Background()
-
-	err := newRootCommand().ExecuteContext(ctx)
-	if err != nil {
-		os.Exit(1)
-	}
+	os.Exit(Main())
 }
 
 type AgeKey struct {
@@ -141,8 +136,7 @@ type AgeKey struct {
 
 func runKeyList(ctx context.Context, opts options, args []string) error {
 	if opts.repo == "" {
-		fmt.Fprintf(os.Stderr, "Fatal: Please specify repository location (-r or --repository-file)\n")
-		os.Exit(1)
+		return errors.New("Fatal: Please specify repository location (-r or --repository-file)")
 	}
 
 	repo, _, err := openRepository(ctx, opts)
@@ -383,6 +377,10 @@ func ageEncryptRandomKey(pubkey string) (string, []byte, error) {
 
 	out, err := cmd.Output()
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return "", nil, fmt.Errorf("%s", string(exitErr.Stderr))
+		}
 		return "", nil, err
 	}
 
@@ -395,6 +393,10 @@ func ageDecryptKey(identityFile string, key []byte) (string, error) {
 
 	out, err := cmd.Output()
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return "", fmt.Errorf("%s", string(exitErr.Stderr))
+		}
 		return "", err
 	}
 
@@ -516,8 +518,7 @@ func openRepository(ctx context.Context, opts options) (*repository.Repository, 
 
 	_, err = be.Stat(ctx, backend.Handle{Type: restic.ConfigFile})
 	if be.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Fatal: repository does not exist: unable to open config file\n")
-		os.Exit(1)
+		return nil, nil, fmt.Errorf("repository does not exist: unable to open config file")
 	}
 
 	return r, be, nil
