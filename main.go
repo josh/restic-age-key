@@ -289,7 +289,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		}
 		defer file.Close()
 
-		_, err = file.WriteString(id.String() + "\n")
+		_, err = file.WriteString(id.String()[0:8] + "\n")
 		if err != nil {
 			return err
 		}

@@ -7,14 +7,14 @@ exec restic-age-key add --password-file $WORK/password.txt --recipient age1yyc2s
 ! stderr .
 
 exec cat keyid-a.txt
-stdout [a-f0-9]{64}
+stdout [a-f0-9]{8}
 
 exec restic-age-key add --password-file $WORK/password.txt --recipient age1ljvnfh04dyagjkpt6z8zrgw3vlthhy4g0vtug709gmh764rj2vgqdx84qr --output keyid-b.txt
 ! stdout .
 ! stderr .
 
 exec cat keyid-b.txt
-stdout [a-f0-9]{64}
+stdout [a-f0-9]{8}
 
 exec bash restic-key-count.bash
 stdout 3
@@ -38,7 +38,7 @@ cmp stdout keyid-b.txt
 restic key list --password-file password.txt --no-cache --json | jq length
 
 -- restic-current-keyid.bash --
-restic key list --no-cache --password-file "$1" --json | jq --raw-output '.[] | select(.current) | .id'
+restic key list --no-cache --password-file "$1" --json | jq --raw-output '.[] | select(.current) | .id[0:8]'
 
 -- password.txt --
 secret
