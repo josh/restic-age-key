@@ -1,6 +1,6 @@
 ! exec restic key list --repo $WORK/not-a-repo
 ! stdout .
-stderr 'repository does not exist: unable to open config file'
+stderr 'unable to open config file'
 
 ! exec restic-age-key list --repo $WORK/not-a-repo
 ! stdout .
