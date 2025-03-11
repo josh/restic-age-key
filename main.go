@@ -109,8 +109,10 @@ func Main() int {
 	err := newRootCommand().Execute()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
+
 		return 1
 	}
+
 	return 0
 }
 
@@ -183,6 +185,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		if opts.identityFile != "" || opts.identityCommand != "" {
 			password, err = readPasswordViaIdentity(ctx, opts)
 		}
+
 		if err != nil {
 			return err
 		}
@@ -210,9 +213,11 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	if hostname, err := os.Hostname(); err == nil {
 		newkey.Hostname = hostname
 	}
+
 	if opts.host != "" {
 		newkey.Hostname = opts.host
 	}
+
 	if newkey.Hostname == "" {
 		return errors.New("hostname is empty")
 	}
@@ -220,9 +225,11 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	if user, err := user.Current(); err == nil {
 		newkey.Username = user.Username
 	}
+
 	if opts.user != "" {
 		newkey.Username = opts.user
 	}
+
 	if newkey.Username == "" {
 		return errors.New("username is empty")
 	}
@@ -277,7 +284,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	}
 
 	if opts.output != "" {
-		file, err := os.OpenFile(opts.output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+		file, err := os.OpenFile(opts.output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 		if err != nil {
 			return err
 		}
@@ -299,10 +306,11 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 	}
 
 	if opts.output != "" {
-		file, err := os.OpenFile(opts.output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+		file, err := os.OpenFile(opts.output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 		if err != nil {
 			return err
 		}
+
 		defer file.Close()
 		file.WriteString(password + "\n")
 	} else {
@@ -354,13 +362,12 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 
 		return nil
 	})
-
 	if err != nil {
 		return "", err
 	}
 
 	if password == "" {
-		return "", fmt.Errorf("no password found")
+		return "", errors.New("no password found")
 	}
 
 	return password, nil
@@ -381,6 +388,7 @@ func ageEncryptRandomKey(pubkey string) (string, []byte, error) {
 		if errors.As(err, &exitErr) {
 			return "", nil, fmt.Errorf("%s", string(exitErr.Stderr))
 		}
+
 		return "", nil, err
 	}
 
@@ -397,6 +405,7 @@ func ageDecryptKey(identityFile string, key []byte) (string, error) {
 		if errors.As(err, &exitErr) {
 			return "", fmt.Errorf("%s", string(exitErr.Stderr))
 		}
+
 		return "", err
 	}
 
@@ -412,6 +421,7 @@ func readIdentityCommand(opts *options) (func(), error) {
 
 	if opts.identityFile != "" {
 		fmt.Fprintf(os.Stderr, "warn: ignoring identity-command, identity-file already set\n")
+
 		return noop, nil
 	}
 
@@ -422,6 +432,7 @@ func readIdentityCommand(opts *options) (func(), error) {
 
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stderr = os.Stderr
+
 	output, err := cmd.Output()
 	if err != nil {
 		return noop, err
@@ -433,6 +444,7 @@ func readIdentityCommand(opts *options) (func(), error) {
 	}
 
 	opts.identityFile = filename
+
 	return closeCallback, nil
 }
 
@@ -450,6 +462,7 @@ func writeTempFile(pattern string, data []byte) (string, func(), error) {
 	_, err = tmpFile.Write(data)
 	if err != nil {
 		closeCallback()
+
 		return "", nil, err
 	}
 
@@ -464,27 +477,32 @@ func readPassword(opts *options) (string, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", err
 		}
+
 		password := strings.TrimSpace(string(s))
 		if password == "" {
 			return "", errors.New("empty password file")
 		}
-		return password, nil
 
+		return password, nil
 	} else if opts.passwordCommand != "" {
 		args, err := backend.SplitShellStrings(opts.passwordCommand)
 		if err != nil {
 			return "", err
 		}
+
 		cmd := exec.Command(args[0], args[1:]...)
 		cmd.Stderr = os.Stderr
+
 		output, err := cmd.Output()
 		if err != nil {
 			return "", err
 		}
+
 		password := strings.TrimSpace(string(output))
 		if password == "" {
 			return "", errors.New("empty password command output")
 		}
+
 		return password, nil
 	} else {
 		return "", errors.New("no password given")
@@ -518,7 +536,7 @@ func openRepository(ctx context.Context, opts options) (*repository.Repository, 
 
 	_, err = be.Stat(ctx, backend.Handle{Type: restic.ConfigFile})
 	if be.IsNotExist(err) {
-		return nil, nil, fmt.Errorf("repository does not exist: unable to open config file")
+		return nil, nil, errors.New("repository does not exist: unable to open config file")
 	}
 
 	return r, be, nil
