@@ -143,6 +143,7 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
 		data, err := repo.LoadRaw(ctx, restic.KeyFile, id)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "LoadKey() failed: %v\n", err)
 			return nil
 		}
 
@@ -150,7 +151,8 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 
 		err = json.Unmarshal(data, k)
 		if err != nil {
-			return fmt.Errorf("failed to unmarshal data: %w", err)
+			fmt.Fprintf(os.Stderr, "LoadKey() failed: %v\n", err)
+			return nil
 		}
 
 		if k.AgePubkey == "" {
