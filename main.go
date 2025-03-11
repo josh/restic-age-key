@@ -362,6 +362,9 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 			if strings.Contains(err.Error(), "malformed secret key") {
 				return err
 			}
+			if strings.Contains(err.Error(), "unknown identity type") {
+				return err
+			}
 			return nil
 		}
 
