@@ -183,7 +183,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		}
 
 		if err != nil {
-			return fmt.Errorf("failed to unmarshal data: %w", err)
+			return fmt.Errorf("Resolving password failed: %w", err)
 		}
 	}
 
