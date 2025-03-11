@@ -331,6 +331,10 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 	}
 	defer closeIdentityCommand()
 
+	if opts.identityFile == "" {
+		return "", errors.New("no identity file specified")
+	}
+
 	var password string
 
 	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
