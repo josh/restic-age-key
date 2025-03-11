@@ -105,19 +105,13 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	return cmd
 }
 
-func Main() int {
+func main() {
 	err := newRootCommand().Execute()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
-
-		return 1
+		os.Exit(1)
 	}
-
-	return 0
-}
-
-func main() {
-	os.Exit(Main())
+	os.Exit(0)
 }
 
 type AgeKey struct {

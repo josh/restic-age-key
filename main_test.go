@@ -1,16 +1,15 @@
 package main
 
 import (
-	"os"
 	"testing"
 
 	"github.com/rogpeppe/go-internal/testscript"
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(testscript.RunMain(m, map[string]func() int{
-		"restic-age-key": Main,
-	}))
+	testscript.Main(m, map[string]func(){
+		"restic-age-key": main,
+	})
 }
 
 func TestScript(t *testing.T) {
