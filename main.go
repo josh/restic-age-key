@@ -342,7 +342,7 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 
 	closeIdentityCommand, err := readIdentityCommand(&opts)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("Resolving identity failed: %w", err)
 	}
 	defer closeIdentityCommand()
 
@@ -514,7 +514,7 @@ func readPassword(opts *options) (string, error) {
 	} else if opts.passwordCommand != "" {
 		args, err := backend.SplitShellStrings(opts.passwordCommand)
 		if err != nil {
-			return "", fmt.Errorf("failed to parse password command: %w", err)
+			return "", err
 		}
 
 		cmd := exec.Command(args[0], args[1:]...)

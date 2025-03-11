@@ -1,0 +1,12 @@
+env RESTIC_REPOSITORY=$WORK/repo
+exec restic init --password-file $WORK/password.txt
+
+! exec restic-age-key password --identity-command '"mismatched quotes'
+! stdout .
+cmp stderr password-stderr.txt
+
+-- password.txt --
+secret
+
+-- password-stderr.txt --
+Resolving identity failed: failed to split shell string: double-quoted string not terminated
