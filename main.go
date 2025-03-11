@@ -27,7 +27,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// constants settable at build time
+var (
+	AgeBin  = ""
+	Version = "0.0.0"
+)
+
 type options struct {
+	ageBin          string
 	repo            string
 	password        string
 	passwordFile    string
@@ -60,13 +67,21 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		SilenceUsage:  true,
 	}
 
-	cmd.PersistentFlags().StringVarP(&options.repo, "repo", "r", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
-	cmd.PersistentFlags().StringVarP(&options.password, "password", "p", options.password, "restic repository password (env: RESTIC_PASSWORD)")
-	cmd.PersistentFlags().StringVarP(&options.passwordFile, "password-file", "P", options.passwordFile, "restic repository password file (env: RESTIC_PASSWORD_FILE)")
-	cmd.PersistentFlags().StringVarP(&options.passwordCommand, "password-command", "C", options.passwordCommand, "restic repository password command (env: RESTIC_PASSWORD_COMMAND)")
-	cmd.PersistentFlags().StringVarP(&options.identityFile, "identity-file", "i", options.identityFile, "age identity file (env: RESTIC_AGE_IDENTITY_FILE)")
+	defaultAgeBin := AgeBin
+	if defaultAgeBin == "" {
+		if path, err := exec.LookPath("age"); err == nil {
+			defaultAgeBin = path
+		}
+	}
+
+	cmd.PersistentFlags().StringVarP(&options.ageBin, "age-bin", "", defaultAgeBin, "path to age binary")
+	cmd.PersistentFlags().StringVarP(&options.repo, "repo", "", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
+	cmd.PersistentFlags().StringVarP(&options.password, "password", "", options.password, "restic repository password (env: RESTIC_PASSWORD)")
+	cmd.PersistentFlags().StringVarP(&options.passwordFile, "password-file", "", options.passwordFile, "restic repository password file (env: RESTIC_PASSWORD_FILE)")
+	cmd.PersistentFlags().StringVarP(&options.passwordCommand, "password-command", "", options.passwordCommand, "restic repository password command (env: RESTIC_PASSWORD_COMMAND)")
+	cmd.PersistentFlags().StringVarP(&options.identityFile, "identity-file", "", options.identityFile, "age identity file (env: RESTIC_AGE_IDENTITY_FILE)")
 	cmd.PersistentFlags().StringVar(&options.identityCommand, "identity-command", options.identityCommand, "age identity command (env: RESTIC_AGE_IDENTITY_COMMAND)")
-	cmd.PersistentFlags().StringVarP(&options.recipient, "recipient", "R", options.recipient, "age recipient public key (env: RESTIC_AGE_RECIPIENT)")
+	cmd.PersistentFlags().StringVarP(&options.recipient, "recipient", "", options.recipient, "age recipient public key (env: RESTIC_AGE_RECIPIENT)")
 
 	listCommand := &cobra.Command{
 		Use:   "list",
@@ -235,7 +250,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		return fmt.Errorf("failed to generate new salt: %w", err)
 	}
 
-	password, ageData, err := ageEncryptRandomKey(opts.recipient)
+	password, ageData, err := ageEncryptRandomKey(opts.ageBin, opts.recipient)
 	if err != nil {
 		return err
 	}
@@ -358,7 +373,7 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 			return nil
 		}
 
-		password, err = ageDecryptKey(opts.identityFile, k.AgeData)
+		password, err = ageDecryptKey(opts.ageBin, opts.identityFile, k.AgeData)
 		if err != nil {
 			if strings.Contains(err.Error(), "no identity matched any of the recipients") {
 				return nil
@@ -385,13 +400,13 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 	return password, nil
 }
 
-func ageEncryptRandomKey(pubkey string) (string, []byte, error) {
+func ageEncryptRandomKey(ageBin string, pubkey string) (string, []byte, error) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return "", nil, fmt.Errorf("failed to generate random key: %w", err)
 	}
 
-	cmd := exec.Command("age", "--encrypt", "--recipient", pubkey)
+	cmd := exec.Command(ageBin, "--encrypt", "--recipient", pubkey)
 	cmd.Stdin = bytes.NewReader(key)
 
 	out, err := cmd.Output()
@@ -407,8 +422,8 @@ func ageEncryptRandomKey(pubkey string) (string, []byte, error) {
 	return hex.EncodeToString(key), out, nil
 }
 
-func ageDecryptKey(identityFile string, key []byte) (string, error) {
-	cmd := exec.Command("age", "--decrypt", "--identity", identityFile)
+func ageDecryptKey(ageBin string, identityFile string, key []byte) (string, error) {
+	cmd := exec.Command(ageBin, "--decrypt", "--identity", identityFile)
 	cmd.Stdin = bytes.NewReader(key)
 
 	out, err := cmd.Output()
