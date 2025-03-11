@@ -356,13 +356,19 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 
 		password, err = ageDecryptKey(opts.identityFile, k.AgeData)
 		if err != nil {
+			if strings.Contains(err.Error(), "no identity matched any of the recipients") {
+				return nil
+			}
+			if strings.Contains(err.Error(), "malformed secret key") {
+				return err
+			}
 			return nil
 		}
 
 		return nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to list repository files: %w", err)
+		return "", err
 	}
 
 	if password == "" {
