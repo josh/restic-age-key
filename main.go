@@ -156,7 +156,7 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 
 		err = json.Unmarshal(data, k)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to unmarshal data: %w", err)
 		}
 
 		if k.AgePubkey == "" {
@@ -168,7 +168,7 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to list repository files: %w", err)
 	}
 
 	return nil
@@ -187,18 +187,18 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		}
 
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to unmarshal data: %w", err)
 		}
 	}
 
 	err = repo.SearchKey(ctx, password, 20, "")
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to verify repository key: %w", err)
 	}
 
 	params, err := crypto.Calibrate(500*time.Millisecond, 60)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to calibrate crypto parameters: %w", err)
 	}
 
 	newkey := &AgeKey{
@@ -236,7 +236,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 
 	newkey.Salt, err = crypto.NewSalt()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to generate new salt: %w", err)
 	}
 
 	password, ageData, err := ageEncryptRandomKey(opts.recipient)
@@ -249,7 +249,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 
 	user, err := crypto.KDF(params, newkey.Salt, password)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to generate key from password: %w", err)
 	}
 
 	if repo.Key() == nil {
@@ -258,7 +258,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 
 	buf, err := json.Marshal(repo.Key())
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal repository key: %w", err)
 	}
 
 	nonce := crypto.NewRandomNonce()
@@ -269,7 +269,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 
 	buf, err = json.Marshal(newkey)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal new key: %w", err)
 	}
 
 	id := restic.Hash(buf)
@@ -280,19 +280,19 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 
 	err = be.Save(ctx, h, backend.NewByteReader(buf, be.Hasher()))
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to save key to backend: %w", err)
 	}
 
 	if opts.output != "" {
 		file, err := os.OpenFile(opts.output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to unmarshal data: %w", err)
 		}
 		defer file.Close()
 
 		_, err = file.WriteString(id.String()[0:8] + "\n")
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to unmarshal data: %w", err)
 		}
 	}
 
@@ -308,11 +308,14 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 	if opts.output != "" {
 		file, err := os.OpenFile(opts.output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to unmarshal data: %w", err)
 		}
 
 		defer file.Close()
-		file.WriteString(password + "\n")
+
+		if _, err := file.WriteString(password + "\n"); err != nil {
+			return fmt.Errorf("failed to write password to file: %w", err)
+		}
 	} else {
 		fmt.Printf("%s\n", password)
 	}
@@ -363,7 +366,7 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 		return nil
 	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to list repository files: %w", err)
 	}
 
 	if password == "" {
@@ -376,7 +379,7 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 func ageEncryptRandomKey(pubkey string) (string, []byte, error) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("failed to generate random key: %w", err)
 	}
 
 	cmd := exec.Command("age", "--encrypt", "--recipient", pubkey)
@@ -389,7 +392,7 @@ func ageEncryptRandomKey(pubkey string) (string, []byte, error) {
 			return "", nil, fmt.Errorf("%s", string(exitErr.Stderr))
 		}
 
-		return "", nil, err
+		return "", nil, fmt.Errorf("failed to encrypt key with age: %w", err)
 	}
 
 	return hex.EncodeToString(key), out, nil
@@ -406,7 +409,7 @@ func ageDecryptKey(identityFile string, key []byte) (string, error) {
 			return "", fmt.Errorf("%s", string(exitErr.Stderr))
 		}
 
-		return "", err
+		return "", fmt.Errorf("failed to decrypt key with age: %w", err)
 	}
 
 	return hex.EncodeToString(out), nil
@@ -427,7 +430,7 @@ func readIdentityCommand(opts *options) (func(), error) {
 
 	args, err := backend.SplitShellStrings(opts.identityCommand)
 	if err != nil {
-		return noop, err
+		return noop, fmt.Errorf("failed to split shell string: %w", err)
 	}
 
 	cmd := exec.Command(args[0], args[1:]...)
@@ -451,7 +454,7 @@ func readIdentityCommand(opts *options) (func(), error) {
 func writeTempFile(pattern string, data []byte) (string, func(), error) {
 	tmpFile, err := os.CreateTemp("", pattern)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("failed to create temporary file: %w", err)
 	}
 
 	closeCallback := func() {
@@ -463,7 +466,7 @@ func writeTempFile(pattern string, data []byte) (string, func(), error) {
 	if err != nil {
 		closeCallback()
 
-		return "", nil, err
+		return "", nil, fmt.Errorf("failed to write to temporary file: %w", err)
 	}
 
 	return tmpFile.Name(), closeCallback, nil
@@ -475,7 +478,7 @@ func readPassword(opts *options) (string, error) {
 	} else if opts.passwordFile != "" {
 		s, err := textfile.Read(opts.passwordFile)
 		if errors.Is(err, os.ErrNotExist) {
-			return "", err
+			return "", fmt.Errorf("failed to read password file: %w", err)
 		}
 
 		password := strings.TrimSpace(string(s))
@@ -487,7 +490,7 @@ func readPassword(opts *options) (string, error) {
 	} else if opts.passwordCommand != "" {
 		args, err := backend.SplitShellStrings(opts.passwordCommand)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("failed to parse password command: %w", err)
 		}
 
 		cmd := exec.Command(args[0], args[1:]...)
@@ -495,7 +498,7 @@ func readPassword(opts *options) (string, error) {
 
 		output, err := cmd.Output()
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("failed to execute password command: %w", err)
 		}
 
 		password := strings.TrimSpace(string(output))
@@ -517,7 +520,7 @@ func openRepository(ctx context.Context, opts options) (*repository.Repository, 
 
 	loc, err := location.Parse(backends, opts.repo)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("failed to parse repository location: %w", err)
 	}
 
 	rt, _ := backend.Transport(backend.TransportOptions{})
@@ -526,12 +529,12 @@ func openRepository(ctx context.Context, opts options) (*repository.Repository, 
 
 	be, err := factory.Open(ctx, loc.Config, rt, lim)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("failed to open backend: %w", err)
 	}
 
 	r, err := repository.New(be, repository.Options{})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("failed to initialize repository: %w", err)
 	}
 
 	_, err = be.Stat(ctx, backend.Handle{Type: restic.ConfigFile})
