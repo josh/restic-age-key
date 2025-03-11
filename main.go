@@ -282,13 +282,13 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	if opts.output != "" {
 		file, err := os.OpenFile(opts.output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 		if err != nil {
-			return fmt.Errorf("failed to unmarshal data: %w", err)
+			return fmt.Errorf("failed to write key id to file: %w", err)
 		}
 		defer file.Close()
 
 		_, err = file.WriteString(id.String()[0:8] + "\n")
 		if err != nil {
-			return fmt.Errorf("failed to unmarshal data: %w", err)
+			return fmt.Errorf("failed to write key id to file: %w", err)
 		}
 	}
 
@@ -304,7 +304,7 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 	if opts.output != "" {
 		file, err := os.OpenFile(opts.output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 		if err != nil {
-			return fmt.Errorf("failed to unmarshal data: %w", err)
+			return fmt.Errorf("failed to write password to file: %w", err)
 		}
 
 		defer file.Close()

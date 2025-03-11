@@ -1,0 +1,13 @@
+env RESTIC_REPOSITORY=$WORK/repo
+exec restic init --password-file $WORK/password.txt
+
+mkdir -p $WORK/output
+chmod 500 $WORK/output
+
+! exec restic-age-key add --password-file $WORK/password.txt --recipient age1ljvnfh04dyagjkpt6z8zrgw3vlthhy4g0vtug709gmh764rj2vgqdx84qr --output $WORK/output/keyid.txt
+! stdout .
+stderr 'failed to write key id to file'
+stderr 'permission denied'
+
+-- password.txt --
+secret
