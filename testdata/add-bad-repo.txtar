@@ -1,0 +1,13 @@
+env RESTIC_REPOSITORY=$WORK/not-a-repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+
+! exec restic key add
+! stdout .
+stderr 'repository does not exist: unable to open config file'
+
+! exec restic-age-key add --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+! stdout .
+stderr 'repository does not exist: unable to open config file'
+
+-- password.txt --
+secret
