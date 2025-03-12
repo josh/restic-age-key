@@ -49,6 +49,7 @@ type options struct {
 
 func newRootCommand() *cobra.Command {
 	options := options{
+		ageBin:          AgeBin,
 		repo:            os.Getenv("RESTIC_REPOSITORY"),
 		password:        os.Getenv("RESTIC_PASSWORD"),
 		passwordFile:    os.Getenv("RESTIC_PASSWORD_FILE"),
@@ -56,6 +57,20 @@ func newRootCommand() *cobra.Command {
 		identityFile:    os.Getenv("RESTIC_AGE_IDENTITY_FILE"),
 		identityCommand: os.Getenv("RESTIC_AGE_IDENTITY_COMMAND"),
 		recipient:       os.Getenv("RESTIC_AGE_RECIPIENT"),
+	}
+
+	if hostname, err := os.Hostname(); err == nil {
+		options.host = hostname
+	}
+
+	if user, err := user.Current(); err == nil {
+		options.user = user.Username
+	}
+
+	if options.ageBin == "" {
+		if path, err := exec.LookPath("age"); err == nil {
+			options.ageBin = path
+		}
 	}
 
 	cmd := &cobra.Command{
@@ -67,14 +82,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		SilenceUsage:  true,
 	}
 
-	defaultAgeBin := AgeBin
-	if defaultAgeBin == "" {
-		if path, err := exec.LookPath("age"); err == nil {
-			defaultAgeBin = path
-		}
-	}
-
-	cmd.PersistentFlags().StringVar(&options.ageBin, "age-bin", defaultAgeBin, "path to age binary")
+	cmd.PersistentFlags().StringVar(&options.ageBin, "age-bin", options.ageBin, "path to age binary")
 	cmd.PersistentFlags().StringVar(&options.repo, "repo", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
 	cmd.PersistentFlags().StringVar(&options.password, "password", options.password, "restic repository password (env: RESTIC_PASSWORD)")
 	cmd.PersistentFlags().StringVar(&options.passwordFile, "password-file", options.passwordFile, "restic repository password file (env: RESTIC_PASSWORD_FILE)")
@@ -98,8 +106,8 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		},
 	}
 	addCommand.Flags().StringVar(&options.recipient, "recipient", options.recipient, "age recipient public key (env: RESTIC_AGE_RECIPIENT)")
-	addCommand.Flags().StringVar(&options.host, "host", "", "the hostname for new key")
-	addCommand.Flags().StringVar(&options.user, "user", "", "the username for new key")
+	addCommand.Flags().StringVar(&options.host, "host", options.host, "the hostname for new key")
+	addCommand.Flags().StringVar(&options.user, "user", options.user, "the username for new key")
 	addCommand.Flags().StringVar(&options.output, "output", "", "output file to write key id to")
 
 	passwordCommand := &cobra.Command{
@@ -221,26 +229,12 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		P: params.P,
 	}
 
-	if hostname, err := os.Hostname(); err == nil {
-		newkey.Hostname = hostname
-	}
-
-	if opts.host != "" {
-		newkey.Hostname = opts.host
-	}
-
+	newkey.Hostname = opts.host
 	if newkey.Hostname == "" {
 		return errors.New("hostname is empty")
 	}
 
-	if user, err := user.Current(); err == nil {
-		newkey.Username = user.Username
-	}
-
-	if opts.user != "" {
-		newkey.Username = opts.user
-	}
-
+	newkey.Username = opts.user
 	if newkey.Username == "" {
 		return errors.New("username is empty")
 	}
