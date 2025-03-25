@@ -437,13 +437,18 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 	}
 
 	for _, pubkey := range keysToRemove {
-		repoID, ok := repoKeys[pubkey]
+		keyID, ok := repoKeys[pubkey]
 		if !ok {
 			return fmt.Errorf("repoID not found for pubkey %s", pubkey)
 		}
+
+		if keyID == repo.KeyID() {
+			return fmt.Errorf("Fatal: refusing to remove key currently used to access repository")
+		}
+
 		h := backend.Handle{
 			Type: restic.KeyFile,
-			Name: repoID.String(),
+			Name: keyID.String(),
 		}
 
 		err := be.Remove(ctx, h)
