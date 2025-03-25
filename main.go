@@ -42,6 +42,7 @@ type options struct {
 	identityFile    string
 	identityCommand string
 	recipient       string
+	recipientsFile  string
 	host            string
 	user            string
 	output          string
@@ -119,10 +120,21 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	}
 	passwordCommand.Flags().StringVar(&options.output, "output", "", "output file to write password to")
 
+	setCommand := &cobra.Command{
+		Use:   "set",
+		Short: "Set keys in the repository based on a recipients file",
+		Long:  "Set command adds any pubkeys from the recipients file that aren't in the repo, ignores existing pubkeys, and removes keys from the repo that aren't present in the recipients file",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runKeySet(cmd.Context(), options, args)
+		},
+	}
+	setCommand.Flags().StringVar(&options.recipientsFile, "recipients-file", "", "file containing age recipient public keys")
+
 	cmd.AddCommand(
 		listCommand,
 		addCommand,
 		passwordCommand,
+		setCommand,
 	)
 
 	return cmd
@@ -330,6 +342,135 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 	}
 
 	return nil
+}
+
+func runKeySet(ctx context.Context, opts options, args []string) error {
+	if opts.repo == "" {
+		return errors.New("Fatal: Please specify repository location (-r or --repository-file)")
+	}
+
+	if opts.recipientsFile == "" {
+		return errors.New("Fatal: Please specify recipients file (--recipients-file)")
+	}
+
+	recipientsList, err := readRecipientsFile(opts.recipientsFile)
+	if err != nil {
+		return errors.New("Fatal: Unable to read recipients file")
+	}
+
+	repo, be, err := openRepository(ctx, opts)
+	if err != nil {
+		return err
+	}
+
+	password, err := readPassword(&opts)
+	if err != nil {
+		if opts.identityFile != "" || opts.identityCommand != "" {
+			password, err = readPasswordViaIdentity(ctx, opts)
+		}
+
+		if err != nil {
+			return fmt.Errorf("Resolving password failed: %w", err)
+		}
+	}
+
+	err = repo.SearchKey(ctx, password, 20, "")
+	if err != nil {
+		return fmt.Errorf("failed to verify repository key: %w", err)
+	}
+
+	repoKeys := make(map[string]restic.ID)
+	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
+		data, err := repo.LoadRaw(ctx, restic.KeyFile, id)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "LoadKey() failed: %v\n", err)
+			return nil
+		}
+
+		k := &AgeKey{}
+
+		err = json.Unmarshal(data, k)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "LoadKey() failed: %v\n", err)
+			return nil
+		}
+
+		if k.AgePubkey != "" {
+			repoKeys[k.AgePubkey] = id
+		}
+
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list repository files: %w", err)
+	}
+
+	var keysToAdd []string
+	var keysToRemove []string
+
+	for _, recipient := range recipientsList {
+		if _, exists := repoKeys[recipient]; !exists {
+			keysToAdd = append(keysToAdd, recipient)
+		}
+	}
+
+	for pubkey := range repoKeys {
+		found := false
+		for _, recipient := range recipientsList {
+			if pubkey == recipient {
+				found = true
+				break
+			}
+		}
+		if !found {
+			keysToRemove = append(keysToRemove, pubkey)
+		}
+	}
+
+	for _, pubkey := range keysToAdd {
+		addOpts := opts
+		addOpts.recipient = pubkey
+		err := runKeyAdd(ctx, addOpts, args)
+		if err != nil {
+			return fmt.Errorf("failed to add key %s: %w", pubkey, err)
+		}
+	}
+
+	for _, pubkey := range keysToRemove {
+		repoID, ok := repoKeys[pubkey]
+		if !ok {
+			return fmt.Errorf("repoID not found for pubkey %s", pubkey)
+		}
+		h := backend.Handle{
+			Type: restic.KeyFile,
+			Name: repoID.String(),
+		}
+
+		err := be.Remove(ctx, h)
+		if err != nil {
+			return fmt.Errorf("failed to remove key %s: %w", pubkey, err)
+		}
+	}
+
+	return nil
+}
+
+func readRecipientsFile(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var recipients []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		recipients = append(recipients, line)
+	}
+
+	return recipients, nil
 }
 
 func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) {

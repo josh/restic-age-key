@@ -1,0 +1,22 @@
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+
+exec restic init
+
+exec restic-age-key add --recipient=age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw
+exec restic-age-key add --recipient=age1th5qzv24ehstkdzljusxwcr4m2rfq4xvd662ppent47x4lqzgatsp7hvts
+
+exec restic-age-key list
+stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
+stdout 'age1th5qzv24ehstkdzljusxwcr4m2rfq4xvd662ppent47x4lqzgatsp7hvts'
+
+exec restic-age-key set --recipients-file=recipients.txt
+
+exec restic-age-key list
+! stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
+! stdout 'age1th5qzv24ehstkdzljusxwcr4m2rfq4xvd662ppent47x4lqzgatsp7hvts'
+
+-- password.txt --
+secret
+
+-- recipients.txt --

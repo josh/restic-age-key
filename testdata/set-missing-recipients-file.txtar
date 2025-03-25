@@ -1,0 +1,13 @@
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+
+exec restic init
+
+! exec restic-age-key set --recipients-file=$WORK/non-existent-file.txt
+cmp stderr set-stderr.txt
+
+-- password.txt --
+secret
+
+-- set-stderr.txt --
+Fatal: Unable to read recipients file
