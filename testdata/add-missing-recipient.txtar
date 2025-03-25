@@ -1,0 +1,14 @@
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+
+exec restic init
+
+! exec restic-age-key add
+! stdout .
+cmp stderr restic-age-key-stderr.txt
+
+-- password.txt --
+secret
+
+-- restic-age-key-stderr.txt --
+Fatal: Please specify recipient (-r or --recipient)

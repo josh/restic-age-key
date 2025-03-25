@@ -199,6 +199,10 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		return err
 	}
 
+	if opts.recipient == "" {
+		return errors.New("Fatal: Please specify recipient (-r or --recipient)")
+	}
+
 	password, err := readPassword(&opts)
 	if err != nil {
 		if opts.identityFile != "" || opts.identityCommand != "" {
