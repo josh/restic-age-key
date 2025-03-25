@@ -27,7 +27,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// constants settable at build time
+// constants settable at build time.
 var (
 	AgeBin  = ""
 	Version = "0.0.0"
@@ -146,6 +146,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
+
 	os.Exit(0)
 }
 
@@ -179,6 +180,7 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 		data, err := repo.LoadRaw(ctx, restic.KeyFile, id)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "LoadKey() failed: %v\n", err)
+
 			return nil
 		}
 
@@ -187,6 +189,7 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 		err = json.Unmarshal(data, k)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "LoadKey() failed: %v\n", err)
+
 			return nil
 		}
 
@@ -380,10 +383,12 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 	}
 
 	repoKeys := make(map[string]restic.ID)
+
 	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
 		data, err := repo.LoadRaw(ctx, restic.KeyFile, id)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "LoadKey() failed: %v\n", err)
+
 			return nil
 		}
 
@@ -392,6 +397,7 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 		err = json.Unmarshal(data, k)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "LoadKey() failed: %v\n", err)
+
 			return nil
 		}
 
@@ -406,6 +412,7 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 	}
 
 	var keysToAdd []string
+
 	var keysToRemove []string
 
 	for _, recipient := range recipientsList {
@@ -416,12 +423,15 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 
 	for pubkey := range repoKeys {
 		found := false
+
 		for _, recipient := range recipientsList {
 			if pubkey == recipient {
 				found = true
+
 				break
 			}
 		}
+
 		if !found {
 			keysToRemove = append(keysToRemove, pubkey)
 		}
@@ -430,6 +440,7 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 	for _, pubkey := range keysToAdd {
 		addOpts := opts
 		addOpts.recipient = pubkey
+
 		err := runKeyAdd(ctx, addOpts, args)
 		if err != nil {
 			return fmt.Errorf("failed to add key %s: %w", pubkey, err)
@@ -443,7 +454,7 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 		}
 
 		if keyID == repo.KeyID() {
-			return fmt.Errorf("Fatal: refusing to remove key currently used to access repository")
+			return errors.New("Fatal: refusing to remove key currently used to access repository")
 		}
 
 		h := backend.Handle{
@@ -467,11 +478,13 @@ func readRecipientsFile(path string) ([]string, error) {
 	}
 
 	var recipients []string
+
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+
 		recipients = append(recipients, line)
 	}
 
@@ -522,12 +535,15 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 			if strings.Contains(err.Error(), "no identity matched any of the recipients") {
 				return nil
 			}
+
 			if strings.Contains(err.Error(), "malformed secret key") {
 				return err
 			}
+
 			if strings.Contains(err.Error(), "unknown identity type") {
 				return err
 			}
+
 			return nil
 		}
 
