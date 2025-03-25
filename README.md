@@ -4,6 +4,8 @@ Use asymmetric [age](https://age-encryption.org/) keys instead of a password on 
 
 ## Usage
 
+### `list`
+
 List only age keys:
 
 ```sh
@@ -12,6 +14,8 @@ restic-age-key list \
   --identity key.txt
 # OUTPUT TK
 ```
+
+### `add`
 
 Add first age key using existing password:
 
@@ -31,7 +35,7 @@ restic-age-key add \
   --pubkey age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
 ```
 
-Remove age key:
+### `remove`
 
 ```sh
 restic-age-key remove \
@@ -39,4 +43,22 @@ restic-age-key remove \
   --pubkey age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
 ```
 
-Note: You can remove your own pubkey and lock yourself out.
+### `password`
+
+This can be used as your `RESTIC_PASSWORD_COMMAND` value.
+
+```sh
+restic-age-key password \
+  --repo /tmp/restic-repo \
+  --identity key.txt
+```
+
+Should you need to recover your password without `restic-age-key`, you can use a few standard unix tools.
+
+```sh
+cat /tmp/restic-repo/keys/123abc | \
+  jq --raw-output '."age-data"' | \
+  base64 --decode | \
+  age --decrypt --identity "your-age-identity.txt" | \
+  xxd --plain --cols 64
+```
