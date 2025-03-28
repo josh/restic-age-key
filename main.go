@@ -351,6 +351,10 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 }
 
 func runKeyPassword(ctx context.Context, opts options, args []string) error {
+	if opts.repo == "" {
+		return errors.New("Fatal: Please specify repository location (-r or --repository-file)")
+	}
+
 	password, err := readPasswordViaIdentity(ctx, opts)
 	if err != nil {
 		return err
