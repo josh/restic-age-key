@@ -11,7 +11,7 @@ stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
 stdout 'age1th5qzv24ehstkdzljusxwcr4m2rfq4xvd662ppent47x4lqzgatsp7hvts'
 ! stdout 'age pubkey: age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr'
 
-exec restic-age-key set --recipients-file=recipients.txt
+exec restic-age-key set --recipients-file=recipients.json
 
 exec restic-age-key list
 stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
@@ -21,6 +21,8 @@ stdout 'age pubkey: age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lv
 -- password.txt --
 secret
 
--- recipients.txt --
-age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw
-age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr
+-- recipients.json --
+[
+    { "host": "alice.local", "user": "alice", "pubkey": "age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw" },
+    { "host": "bob.local", "user": "bob", "pubkey": "age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr" }
+]

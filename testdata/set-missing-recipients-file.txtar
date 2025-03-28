@@ -3,7 +3,7 @@ env RESTIC_PASSWORD_FILE=$WORK/password.txt
 
 exec restic init
 
-! exec restic-age-key set --recipients-file=$WORK/non-existent-file.txt
+! exec restic-age-key set --recipients-file=$WORK/non-existent-file.json
 cmp stderr set-stderr.txt
 
 -- password.txt --

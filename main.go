@@ -187,6 +187,12 @@ type AgeKey struct {
 	AgeData   []byte `json:"age-data"`
 }
 
+type Recipient struct {
+	Pubkey string `json:"pubkey"`
+	Host   string `json:"host"`
+	User   string `json:"user"`
+}
+
 func runKeyList(ctx context.Context, opts options, args []string) error {
 	if opts.repo == "" {
 		return errors.New("Fatal: Please specify repository location (-r or --repository-file)")
@@ -377,7 +383,7 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 		return errors.New("Fatal: Please specify recipients file (--recipients-file)")
 	}
 
-	recipientsList, err := readRecipientsFile(opts.recipientsFile)
+	recipients, err := readRecipientsFile(opts.recipientsFile)
 	if err != nil {
 		return errors.New("Fatal: Unable to read recipients file")
 	}
@@ -432,12 +438,11 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 		return fmt.Errorf("failed to list repository files: %w", err)
 	}
 
-	var keysToAdd []string
+	var keysToAdd []Recipient
+	var keysToRemove []Recipient
 
-	var keysToRemove []string
-
-	for _, recipient := range recipientsList {
-		if _, exists := repoKeys[recipient]; !exists {
+	for _, recipient := range recipients {
+		if _, exists := repoKeys[recipient.Pubkey]; !exists {
 			keysToAdd = append(keysToAdd, recipient)
 		}
 	}
@@ -445,8 +450,8 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 	for pubkey := range repoKeys {
 		found := false
 
-		for _, recipient := range recipientsList {
-			if pubkey == recipient {
+		for _, recipient := range recipients {
+			if pubkey == recipient.Pubkey {
 				found = true
 
 				break
@@ -454,24 +459,26 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 		}
 
 		if !found {
-			keysToRemove = append(keysToRemove, pubkey)
+			keysToRemove = append(keysToRemove, Recipient{Pubkey: pubkey})
 		}
 	}
 
-	for _, pubkey := range keysToAdd {
+	for _, recipient := range keysToAdd {
 		addOpts := opts
-		addOpts.recipient = pubkey
+		addOpts.recipient = recipient.Pubkey
+		addOpts.host = recipient.Host
+		addOpts.user = recipient.User
 
 		err := runKeyAdd(ctx, addOpts, args)
 		if err != nil {
-			return fmt.Errorf("failed to add key %s: %w", pubkey, err)
+			return fmt.Errorf("failed to add key %s: %w", recipient.Pubkey, err)
 		}
 	}
 
-	for _, pubkey := range keysToRemove {
-		keyID, ok := repoKeys[pubkey]
+	for _, recipient := range keysToRemove {
+		keyID, ok := repoKeys[recipient.Pubkey]
 		if !ok {
-			return fmt.Errorf("repoID not found for pubkey %s", pubkey)
+			return fmt.Errorf("repoID not found for pubkey %s", recipient.Pubkey)
 		}
 
 		if keyID == repo.KeyID() {
@@ -485,28 +492,23 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 
 		err := be.Remove(ctx, h)
 		if err != nil {
-			return fmt.Errorf("failed to remove key %s: %w", pubkey, err)
+			return fmt.Errorf("failed to remove key %s: %w", recipient.Pubkey, err)
 		}
 	}
 
 	return nil
 }
 
-func readRecipientsFile(path string) ([]string, error) {
+func readRecipientsFile(path string) ([]Recipient, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
-	var recipients []string
-
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		recipients = append(recipients, line)
+	var recipients []Recipient
+	err = json.Unmarshal(data, &recipients)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse recipients file as JSON: %w", err)
 	}
 
 	return recipients, nil
