@@ -86,13 +86,15 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	}
 
 	cmd.PersistentFlags().StringVar(&options.ageBin, "age-bin", options.ageBin, "path to age binary")
-	cmd.PersistentFlags().StringVar(&options.repo, "repo", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
-	cmd.PersistentFlags().StringVar(&options.fromRepo, "from-repo", options.fromRepo, "restic repository location (env: RESTIC_FROM_REPOSITORY)")
-	cmd.PersistentFlags().StringVar(&options.password, "password", options.password, "restic repository password (env: RESTIC_PASSWORD)")
-	cmd.PersistentFlags().StringVar(&options.passwordFile, "password-file", options.passwordFile, "restic repository password file (env: RESTIC_PASSWORD_FILE)")
-	cmd.PersistentFlags().StringVar(&options.passwordCommand, "password-command", options.passwordCommand, "restic repository password command (env: RESTIC_PASSWORD_COMMAND)")
 	cmd.PersistentFlags().StringVar(&options.identityFile, "identity-file", options.identityFile, "age identity file (env: RESTIC_AGE_IDENTITY_FILE)")
 	cmd.PersistentFlags().StringVar(&options.identityCommand, "identity-command", options.identityCommand, "age identity command (env: RESTIC_AGE_IDENTITY_COMMAND)")
+
+	addDecryptRepoCommands := func(cmd *cobra.Command) {
+		cmd.Flags().StringVar(&options.repo, "repo", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
+		cmd.Flags().StringVar(&options.password, "password", options.password, "restic repository password (env: RESTIC_PASSWORD)")
+		cmd.Flags().StringVar(&options.passwordFile, "password-file", options.passwordFile, "restic repository password file (env: RESTIC_PASSWORD_FILE)")
+		cmd.Flags().StringVar(&options.passwordCommand, "password-command", options.passwordCommand, "restic repository password command (env: RESTIC_PASSWORD_COMMAND)")
+	}
 
 	listCommand := &cobra.Command{
 		Use:   "list",
@@ -101,6 +103,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 			return runKeyList(cmd.Context(), options, args)
 		},
 	}
+	listCommand.Flags().StringVar(&options.repo, "repo", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
 
 	addCommand := &cobra.Command{
 		Use:   "add",
@@ -109,10 +112,22 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 			return runKeyAdd(cmd.Context(), options, args)
 		},
 	}
+	addDecryptRepoCommands(addCommand)
 	addCommand.Flags().StringVar(&options.recipient, "recipient", options.recipient, "age recipient public key (env: RESTIC_AGE_RECIPIENT)")
 	addCommand.Flags().StringVar(&options.host, "host", options.host, "the hostname for new key")
 	addCommand.Flags().StringVar(&options.user, "user", options.user, "the username for new key")
 	addCommand.Flags().StringVar(&options.output, "output", "", "output file to write key id to")
+
+	setCommand := &cobra.Command{
+		Use:   "set",
+		Short: "Set keys in the repository based on a recipients file",
+		Long:  "Set command adds any pubkeys from the recipients file that aren't in the repo, ignores existing pubkeys, and removes keys from the repo that aren't present in the recipients file",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runKeySet(cmd.Context(), options, args)
+		},
+	}
+	addDecryptRepoCommands(setCommand)
+	setCommand.Flags().StringVar(&options.recipientsFile, "recipients-file", "", "file containing age recipient public keys")
 
 	passwordCommand := &cobra.Command{
 		Use:   "password",
@@ -121,6 +136,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 			return runKeyPassword(cmd.Context(), options, args)
 		},
 	}
+	passwordCommand.Flags().StringVar(&options.repo, "repo", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
 	passwordCommand.Flags().StringVar(&options.output, "output", "", "output file to write password to")
 
 	fromPasswordCommand := &cobra.Command{
@@ -131,24 +147,15 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 			return runKeyPassword(cmd.Context(), options, args)
 		},
 	}
+	fromPasswordCommand.Flags().StringVar(&options.fromRepo, "from-repo", options.fromRepo, "restic repository location (env: RESTIC_FROM_REPOSITORY)")
 	fromPasswordCommand.Flags().StringVar(&options.output, "output", "", "output file to write password to")
-
-	setCommand := &cobra.Command{
-		Use:   "set",
-		Short: "Set keys in the repository based on a recipients file",
-		Long:  "Set command adds any pubkeys from the recipients file that aren't in the repo, ignores existing pubkeys, and removes keys from the repo that aren't present in the recipients file",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runKeySet(cmd.Context(), options, args)
-		},
-	}
-	setCommand.Flags().StringVar(&options.recipientsFile, "recipients-file", "", "file containing age recipient public keys")
 
 	cmd.AddCommand(
 		listCommand,
 		addCommand,
+		setCommand,
 		passwordCommand,
 		fromPasswordCommand,
-		setCommand,
 	)
 
 	return cmd
