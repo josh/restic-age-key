@@ -36,6 +36,7 @@ var (
 type options struct {
 	ageBin          string
 	repo            string
+	fromRepo        string
 	password        string
 	passwordFile    string
 	passwordCommand string
@@ -52,6 +53,7 @@ func newRootCommand() *cobra.Command {
 	options := options{
 		ageBin:          AgeBin,
 		repo:            os.Getenv("RESTIC_REPOSITORY"),
+		fromRepo:        os.Getenv("RESTIC_FROM_REPOSITORY"),
 		password:        os.Getenv("RESTIC_PASSWORD"),
 		passwordFile:    os.Getenv("RESTIC_PASSWORD_FILE"),
 		passwordCommand: os.Getenv("RESTIC_PASSWORD_COMMAND"),
@@ -85,6 +87,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 
 	cmd.PersistentFlags().StringVar(&options.ageBin, "age-bin", options.ageBin, "path to age binary")
 	cmd.PersistentFlags().StringVar(&options.repo, "repo", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
+	cmd.PersistentFlags().StringVar(&options.fromRepo, "from-repo", options.fromRepo, "restic repository location (env: RESTIC_FROM_REPOSITORY)")
 	cmd.PersistentFlags().StringVar(&options.password, "password", options.password, "restic repository password (env: RESTIC_PASSWORD)")
 	cmd.PersistentFlags().StringVar(&options.passwordFile, "password-file", options.passwordFile, "restic repository password file (env: RESTIC_PASSWORD_FILE)")
 	cmd.PersistentFlags().StringVar(&options.passwordCommand, "password-command", options.passwordCommand, "restic repository password command (env: RESTIC_PASSWORD_COMMAND)")
@@ -120,6 +123,16 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	}
 	passwordCommand.Flags().StringVar(&options.output, "output", "", "output file to write password to")
 
+	fromPasswordCommand := &cobra.Command{
+		Use:   "from-password",
+		Short: "Retrieve the password for a key",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			options.repo = options.fromRepo
+			return runKeyPassword(cmd.Context(), options, args)
+		},
+	}
+	fromPasswordCommand.Flags().StringVar(&options.output, "output", "", "output file to write password to")
+
 	setCommand := &cobra.Command{
 		Use:   "set",
 		Short: "Set keys in the repository based on a recipients file",
@@ -134,6 +147,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		listCommand,
 		addCommand,
 		passwordCommand,
+		fromPasswordCommand,
 		setCommand,
 	)
 
