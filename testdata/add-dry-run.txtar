@@ -1,0 +1,18 @@
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=localhost
+
+exec restic init --repo $WORK/repo --password-file $WORK/password.txt
+
+exec restic-age-key add --dry-run --repo $WORK/repo --password-file $WORK/password.txt --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+! stdout .
+cmp stderr restic-age-key-stderr.txt
+
+exec restic-age-key list --repo $WORK/repo
+! stdout .
+! stderr .
+
+-- password.txt --
+secret
+
+-- restic-age-key-stderr.txt --
+[DRY RUN] Add key age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 for alice@localhost

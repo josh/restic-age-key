@@ -47,6 +47,7 @@ type options struct {
 	host            string
 	user            string
 	output          string
+	dryRun          bool
 }
 
 func newRootCommand() *cobra.Command {
@@ -60,14 +61,20 @@ func newRootCommand() *cobra.Command {
 		identityFile:    os.Getenv("RESTIC_AGE_IDENTITY_FILE"),
 		identityCommand: os.Getenv("RESTIC_AGE_IDENTITY_COMMAND"),
 		recipient:       os.Getenv("RESTIC_AGE_RECIPIENT"),
+		user:            os.Getenv("RESTIC_AGE_USER"),
+		host:            os.Getenv("RESTIC_AGE_HOST"),
 	}
 
-	if hostname, err := os.Hostname(); err == nil {
-		options.host = hostname
+	if options.host == "" {
+		if hostname, err := os.Hostname(); err == nil {
+			options.host = hostname
+		}
 	}
 
-	if user, err := user.Current(); err == nil {
-		options.user = user.Username
+	if options.user == "" {
+		if user, err := user.Current(); err == nil {
+			options.user = user.Username
+		}
 	}
 
 	if options.ageBin == "" {
@@ -117,6 +124,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	addCommand.Flags().StringVar(&options.host, "host", options.host, "the hostname for new key")
 	addCommand.Flags().StringVar(&options.user, "user", options.user, "the username for new key")
 	addCommand.Flags().StringVar(&options.output, "output", "", "output file to write key id to")
+	addCommand.Flags().BoolVar(&options.dryRun, "dry-run", false, "do not add key, just show what would be done")
 
 	setCommand := &cobra.Command{
 		Use:   "set",
@@ -128,6 +136,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	}
 	addDecryptRepoCommands(setCommand)
 	setCommand.Flags().StringVar(&options.recipientsFile, "recipients-file", "", "file containing age recipient public keys")
+	setCommand.Flags().BoolVar(&options.dryRun, "dry-run", false, "do not add or remove keys, just show what would be done")
 
 	passwordCommand := &cobra.Command{
 		Use:   "password",
@@ -188,6 +197,7 @@ type AgeKey struct {
 }
 
 type Recipient struct {
+	ID     restic.ID
 	Pubkey string `json:"pubkey"`
 	Host   string `json:"host"`
 	User   string `json:"user"`
@@ -329,6 +339,16 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		Name: id.String(),
 	}
 
+	logPrefix := ""
+	if opts.dryRun {
+		logPrefix = "[DRY RUN] "
+	}
+	fmt.Fprintf(os.Stderr, "%sAdd key %s for %s@%s\n", logPrefix, opts.recipient, opts.user, opts.host)
+
+	if opts.dryRun {
+		return nil
+	}
+
 	err = be.Save(ctx, h, backend.NewByteReader(buf, be.Hasher()))
 	if err != nil {
 		return fmt.Errorf("failed to save key to backend: %w", err)
@@ -387,7 +407,7 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 		return errors.New("Fatal: Please specify recipients file (--recipients-file)")
 	}
 
-	recipients, err := readRecipientsFile(opts.recipientsFile)
+	setRecipients, err := readRecipientsFile(opts.recipientsFile)
 	if err != nil {
 		return errors.New("Fatal: Unable to read recipients file")
 	}
@@ -413,7 +433,7 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 		return fmt.Errorf("failed to verify repository key: %w", err)
 	}
 
-	repoKeys := make(map[string]restic.ID)
+	repoKeys := make(map[string]Recipient)
 
 	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
 		data, err := repo.LoadRaw(ctx, restic.KeyFile, id)
@@ -433,7 +453,12 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 		}
 
 		if k.AgePubkey != "" {
-			repoKeys[k.AgePubkey] = id
+			repoKeys[k.AgePubkey] = Recipient{
+				ID:     id,
+				Pubkey: k.AgePubkey,
+				Host:   k.Hostname,
+				User:   k.Username,
+			}
 		}
 
 		return nil
@@ -445,59 +470,73 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 	var keysToAdd []Recipient
 	var keysToRemove []Recipient
 
-	for _, recipient := range recipients {
+	for _, recipient := range setRecipients {
 		if _, exists := repoKeys[recipient.Pubkey]; !exists {
 			keysToAdd = append(keysToAdd, recipient)
 		}
 	}
 
-	for pubkey := range repoKeys {
+	for pubkey, existingRecipient := range repoKeys {
 		found := false
-
-		for _, recipient := range recipients {
+		for _, recipient := range setRecipients {
 			if pubkey == recipient.Pubkey {
 				found = true
-
 				break
 			}
 		}
-
 		if !found {
-			keysToRemove = append(keysToRemove, Recipient{Pubkey: pubkey})
+			keysToRemove = append(keysToRemove, existingRecipient)
 		}
 	}
+
+	logPrefix := ""
+	if opts.dryRun {
+		logPrefix = "[DRY RUN] "
+	}
+
+	hasError := false
 
 	for _, recipient := range keysToAdd {
 		addOpts := opts
 		addOpts.recipient = recipient.Pubkey
 		addOpts.host = recipient.Host
 		addOpts.user = recipient.User
+		addOpts.dryRun = opts.dryRun
 
 		err := runKeyAdd(ctx, addOpts, args)
 		if err != nil {
-			return fmt.Errorf("failed to add key %s: %w", recipient.Pubkey, err)
+			fmt.Fprintf(os.Stderr, "failed to add key %s: %v\n", recipient.Pubkey, err)
+			hasError = true
 		}
 	}
 
 	for _, recipient := range keysToRemove {
-		keyID, ok := repoKeys[recipient.Pubkey]
-		if !ok {
-			return fmt.Errorf("repoID not found for pubkey %s", recipient.Pubkey)
-		}
-
-		if keyID == repo.KeyID() {
-			return errors.New("Fatal: refusing to remove key currently used to access repository")
+		if recipient.ID == repo.KeyID() {
+			fmt.Fprintf(os.Stderr, "Error: refusing to remove key currently used to access repository\n")
+			hasError = true
+			continue
 		}
 
 		h := backend.Handle{
 			Type: restic.KeyFile,
-			Name: keyID.String(),
+			Name: recipient.ID.String(),
+		}
+
+		fmt.Fprintf(os.Stderr, "%sRemove key %s for %s@%s\n", logPrefix, recipient.Pubkey, recipient.User, recipient.Host)
+
+		if opts.dryRun {
+			continue
 		}
 
 		err := be.Remove(ctx, h)
 		if err != nil {
-			return fmt.Errorf("failed to remove key %s: %w", recipient.Pubkey, err)
+			fmt.Fprintf(os.Stderr, "failed to remove key %s: %v\n", recipient.Pubkey, err)
+			hasError = true
 		}
+	}
+
+	if hasError {
+		return errors.New("failed to set keys")
 	}
 
 	return nil

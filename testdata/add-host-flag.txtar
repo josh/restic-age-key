@@ -1,3 +1,6 @@
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=localhost
+
 exec restic init --repo $WORK/repo --password-file $WORK/password.txt
 
 exec restic-age-key list --repo $WORK/repo
@@ -5,7 +8,7 @@ exec restic-age-key list --repo $WORK/repo
 ! stderr .
 
 exec restic-age-key add --repo $WORK/repo --password-file $WORK/password.txt --host custom-hostname --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
-! stderr .
+cmp stderr restic-age-key-stderr.txt
 
 exec restic key list --no-cache --repo $WORK/repo --password-file $WORK/password.txt
 stdout 'custom-hostname'
@@ -13,3 +16,6 @@ stdout 'custom-hostname'
 
 -- password.txt --
 secret
+
+-- restic-age-key-stderr.txt --
+Add key age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 for alice@custom-hostname

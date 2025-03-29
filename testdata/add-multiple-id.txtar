@@ -1,17 +1,19 @@
 env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=localhost
 
 exec restic init --password-file $WORK/password.txt
 
 exec restic-age-key add --password-file $WORK/password.txt --recipient age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4 --output keyid-a.txt
 ! stdout .
-! stderr .
+cmp stderr restic-age-key-key-a-stderr.txt
 
 exec cat keyid-a.txt
 stdout [a-f0-9]{8}
 
 exec restic-age-key add --password-file $WORK/password.txt --recipient age1ljvnfh04dyagjkpt6z8zrgw3vlthhy4g0vtug709gmh764rj2vgqdx84qr --output keyid-b.txt
 ! stdout .
-! stderr .
+cmp stderr restic-age-key-key-b-stderr.txt
 
 exec cat keyid-b.txt
 stdout [a-f0-9]{8}
@@ -48,3 +50,8 @@ AGE-SECRET-KEY-1VYLVW0ECH8CVFEKQUSDCSWR6URU6ZWVFH245PHW5TSSE9V676DTSFHL5E7
 
 -- key-b.txt --
 AGE-SECRET-KEY-1GSCR445N7JFSESARCN42GDQ4LLD8TJHF8MQW9594ZNKJXXSLJ2RQ5EM8VP
+
+-- restic-age-key-key-a-stderr.txt --
+Add key age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4 for alice@localhost
+-- restic-age-key-key-b-stderr.txt --
+Add key age1ljvnfh04dyagjkpt6z8zrgw3vlthhy4g0vtug709gmh764rj2vgqdx84qr for alice@localhost

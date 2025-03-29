@@ -28,4 +28,5 @@ AGE-SECRET-KEY-1KEA8L9NDXW4GWW946TZ5LJVGYRGHL4JQ3ZVMX4HRAE3LWYTAU8GQAKTGZ9
 ]
 
 -- set-stderr.txt --
-Fatal: refusing to remove key currently used to access repository
+Error: refusing to remove key currently used to access repository
+failed to set keys

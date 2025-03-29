@@ -1,0 +1,36 @@
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+env RESTIC_AGE_USER=clara
+env RESTIC_AGE_HOST=clara.local
+
+exec restic init
+
+exec restic-age-key add --recipient=age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw
+exec restic-age-key add --recipient=age1th5qzv24ehstkdzljusxwcr4m2rfq4xvd662ppent47x4lqzgatsp7hvts
+
+exec restic-age-key list
+stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
+stdout 'age1th5qzv24ehstkdzljusxwcr4m2rfq4xvd662ppent47x4lqzgatsp7hvts'
+! stdout 'age pubkey: age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr'
+
+exec restic-age-key set --dry-run --recipients-file=recipients.json
+! stdout .
+cmp stderr restic-age-key-stderr.txt
+
+exec restic-age-key list
+stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
+stdout 'age1th5qzv24ehstkdzljusxwcr4m2rfq4xvd662ppent47x4lqzgatsp7hvts'
+! stdout 'age pubkey: age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr'
+
+-- password.txt --
+secret
+
+-- recipients.json --
+[
+    { "host": "alice.local", "user": "alice", "pubkey": "age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw" },
+    { "host": "bob.local", "user": "bob", "pubkey": "age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr" }
+]
+
+-- restic-age-key-stderr.txt --
+[DRY RUN] Add key age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr for bob@bob.local
+[DRY RUN] Remove key age1th5qzv24ehstkdzljusxwcr4m2rfq4xvd662ppent47x4lqzgatsp7hvts for clara@clara.local
