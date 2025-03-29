@@ -4,8 +4,8 @@ env RESTIC_AGE_HOST=localhost
 
 exec restic init --password-file $WORK/password.txt
 
-exec restic-age-key list
-! stdout .
+exec bash restic-key-count.bash
+stdout 1
 ! stderr .
 
 exec restic-age-key add --password-file $WORK/password.txt --recipient age1a2jgs9svf78df0tkk035uk0w7zrw670tr92kz4azrekydg277flswlk8p6

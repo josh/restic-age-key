@@ -7,8 +7,8 @@ exec restic-age-key add --dry-run --repo $WORK/repo --password-file $WORK/passwo
 ! stdout .
 cmp stderr restic-age-key-stderr.txt
 
-exec restic-age-key list --repo $WORK/repo
-! stdout .
+exec restic-age-key list --repo $WORK/repo --password-file $WORK/password.txt
+! stdout age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
 ! stderr .
 
 -- password.txt --

@@ -11,7 +11,7 @@ exec restic-age-key add --recipient=age1th5qzv24ehstkdzljusxwcr4m2rfq4xvd662ppen
 exec restic-age-key list
 stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
 stdout 'age1th5qzv24ehstkdzljusxwcr4m2rfq4xvd662ppent47x4lqzgatsp7hvts'
-! stdout 'age pubkey: age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr'
+! stdout 'age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr'
 
 exec restic-age-key set --dry-run --recipients-file=recipients.json
 ! stdout .
@@ -20,7 +20,7 @@ cmp stderr restic-age-key-stderr.txt
 exec restic-age-key list
 stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
 stdout 'age1th5qzv24ehstkdzljusxwcr4m2rfq4xvd662ppent47x4lqzgatsp7hvts'
-! stdout 'age pubkey: age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr'
+! stdout 'age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr'
 
 -- password.txt --
 secret

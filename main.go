@@ -116,7 +116,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 			return runKeyList(cmd.Context(), options, args)
 		},
 	}
-	listCommand.Flags().StringVar(&options.repo, "repo", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
+	addDecryptRepoCommands(listCommand)
 
 	addCommand := &cobra.Command{
 		Use:   "add",
@@ -209,38 +209,66 @@ type Recipient struct {
 	User   string `json:"user"`
 }
 
+type ListKey struct {
+	ID        string
+	ShortID   string
+	AgePubkey string
+	IsCurrent bool
+	Username  string
+	Hostname  string
+	Created   string
+}
+
 func runKeyList(ctx context.Context, opts options, args []string) error {
 	if opts.repo == "" {
 		return errors.New("Fatal: Please specify repository location (-r or --repository-file)")
 	}
 
-	repo, _, err := openRepository(ctx, opts)
+	repo, _, err := openRepositoryWithPassword(ctx, opts)
 	if err != nil {
 		return err
 	}
+
+	divider := strings.Repeat("-", 126)
+	fmt.Printf(" ID        Age Pubkey                                                          User    Host                Created\n")
+	fmt.Printf("%s\n", divider)
+
+	var keys []ListKey
+
+	currentKeyID := repo.KeyID()
+	currentKeyIDStr := currentKeyID.String()
 
 	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
 		data, err := repo.LoadRaw(ctx, restic.KeyFile, id)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "LoadKey() failed: %v\n", err)
-
 			return nil
 		}
 
 		k := &AgeKey{}
-
 		err = json.Unmarshal(data, k)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "LoadKey() failed: %v\n", err)
-
 			return nil
 		}
 
-		if k.AgePubkey == "" {
-			return nil
+		idStr := id.String()
+		isCurrent := idStr == currentKeyIDStr
+
+		shortID := idStr
+		if len(idStr) > 8 {
+			shortID = idStr[:8]
 		}
 
-		fmt.Printf("age pubkey: %v\n", k.AgePubkey)
+		keys = append(keys, ListKey{
+			ID:        idStr,
+			ShortID:   shortID,
+			IsCurrent: isCurrent,
+			AgePubkey: k.AgePubkey,
+			Username:  k.Username,
+			Hostname:  k.Hostname,
+			Created:   k.Created.Local().Format("2006-01-02 15:04:05"),
+		})
 
 		return nil
 	})
@@ -248,33 +276,34 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 		return fmt.Errorf("failed to list repository files: %w", err)
 	}
 
+	for _, key := range keys {
+		currentMarker := " "
+		if key.IsCurrent {
+			currentMarker = "*"
+		}
+		fmt.Printf("%s%-8s  %-60s  %-6s  %-18s  %s\n",
+			currentMarker,
+			key.ShortID,
+			key.AgePubkey,
+			key.Username,
+			key.Hostname,
+			key.Created,
+		)
+	}
+
+	fmt.Printf("%s\n", divider)
+
 	return nil
 }
 
 func runKeyAdd(ctx context.Context, opts options, args []string) error {
-	repo, be, err := openRepository(ctx, opts)
+	repo, be, err := openRepositoryWithPassword(ctx, opts)
 	if err != nil {
 		return err
 	}
 
 	if opts.recipient == "" {
 		return errors.New("Fatal: Please specify recipient (-r or --recipient)")
-	}
-
-	password, err := readPassword(&opts)
-	if err != nil {
-		if opts.identityFile != "" || opts.identityCommand != "" {
-			password, err = readPasswordViaIdentity(ctx, opts)
-		}
-
-		if err != nil {
-			return fmt.Errorf("Resolving password failed: %w", err)
-		}
-	}
-
-	err = repo.SearchKey(ctx, password, 20, "")
-	if err != nil {
-		return fmt.Errorf("failed to verify repository key: %w", err)
 	}
 
 	params, err := crypto.Calibrate(500*time.Millisecond, 60)
@@ -418,25 +447,9 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 		return errors.New("Fatal: Unable to read recipients file")
 	}
 
-	repo, be, err := openRepository(ctx, opts)
+	repo, be, err := openRepositoryWithPassword(ctx, opts)
 	if err != nil {
 		return err
-	}
-
-	password, err := readPassword(&opts)
-	if err != nil {
-		if opts.identityFile != "" || opts.identityCommand != "" {
-			password, err = readPasswordViaIdentity(ctx, opts)
-		}
-
-		if err != nil {
-			return fmt.Errorf("Resolving password failed: %w", err)
-		}
-	}
-
-	err = repo.SearchKey(ctx, password, 20, "")
-	if err != nil {
-		return fmt.Errorf("failed to verify repository key: %w", err)
 	}
 
 	repoKeys := make(map[string]Recipient)
@@ -766,6 +779,31 @@ func readPassword(opts *options) (string, error) {
 	} else {
 		return "", errors.New("no password given")
 	}
+}
+
+func openRepositoryWithPassword(ctx context.Context, opts options) (*repository.Repository, backend.Backend, error) {
+	repo, be, err := openRepository(ctx, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	password, err := readPassword(&opts)
+	if err != nil {
+		if opts.identityFile != "" || opts.identityCommand != "" {
+			password, err = readPasswordViaIdentity(ctx, opts)
+		}
+
+		if err != nil {
+			return nil, nil, fmt.Errorf("Resolving password failed: %w", err)
+		}
+	}
+
+	err = repo.SearchKey(ctx, password, 20, "")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to verify repository key: %w", err)
+	}
+
+	return repo, be, nil
 }
 
 func openRepository(ctx context.Context, opts options) (*repository.Repository, backend.Backend, error) {

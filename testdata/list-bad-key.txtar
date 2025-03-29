@@ -2,20 +2,15 @@ env RESTIC_REPOSITORY=$WORK/repo
 exec restic init --password-file $WORK/password.txt
 cp $WORK/bad-key.json $WORK/repo/keys/aecf52388568ff71c1f20404d5732580ccf9e3ab2444e49ca6e931df5b303928
 
-# Prints different errors due to race condition
-# exec restic key list --no-cache --password-file $WORK/password.txt
-# cmp stderr restic-stderr.txt
+exec restic key list --no-cache --password-file $WORK/password.txt
+stderr 'invalid data returned'
 
-exec restic-age-key list
-cmp stderr restic-age-key-stderr.txt
+exec restic-age-key list --password-file $WORK/password.txt
+stderr 'invalid data returned'
 
 -- password.txt --
 secret
 
--- restic-stderr.txt --
-LoadKey() failed: LoadRaw(<key/aecf523885>): invalid data returned
--- restic-age-key-stderr.txt --
-LoadKey() failed: LoadRaw(<key/aecf523885>): invalid data returned
 -- bad-key.json --
 {
   "foo": 42

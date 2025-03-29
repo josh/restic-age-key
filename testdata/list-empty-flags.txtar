@@ -4,8 +4,7 @@ exec restic key list --no-cache --repo $WORK/repo --password-file $WORK/password
 stdout \*[a-f0-9]{8}
 ! stderr .
 
-exec restic-age-key list --repo $WORK/repo
-! stdout .
+exec restic-age-key list --repo $WORK/repo --password-file $WORK/password.txt
 ! stderr .
 
 -- password.txt --

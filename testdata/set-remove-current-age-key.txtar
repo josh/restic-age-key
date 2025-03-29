@@ -5,14 +5,14 @@ exec restic init --password-file=$WORK/password.txt
 exec restic-age-key add --password-file=$WORK/password.txt --recipient=age15xz8e5kyjguheag9a99nmwfrf5z3wr9729x2nhdk8zdfcny7a4wqtyl0rn
 exec restic-age-key add --password-file=$WORK/password.txt --recipient=age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9
 
-exec restic-age-key list
+exec restic-age-key list --password-file=$WORK/password.txt
 stdout 'age15xz8e5kyjguheag9a99nmwfrf5z3wr9729x2nhdk8zdfcny7a4wqtyl0rn'
 stdout 'age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9'
 
 ! exec restic-age-key set --identity-file=$WORK/key.txt --recipients-file=recipients.json
 cmp stderr set-stderr.txt
 
-exec restic-age-key list
+exec restic-age-key list --password-file=$WORK/password.txt
 stdout 'age15xz8e5kyjguheag9a99nmwfrf5z3wr9729x2nhdk8zdfcny7a4wqtyl0rn'
 stdout 'age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9'
 
