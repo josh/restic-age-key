@@ -794,7 +794,7 @@ func openRepositoryWithPassword(ctx context.Context, opts options) (*repository.
 		}
 
 		if err != nil {
-			return nil, nil, fmt.Errorf("Resolving password failed: %w", err)
+			return nil, nil, fmt.Errorf("Fatal: Resolving password failed: %w", err)
 		}
 	}
 
