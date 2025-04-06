@@ -229,10 +229,6 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 		return err
 	}
 
-	divider := strings.Repeat("-", 126)
-	fmt.Printf(" ID        Age Pubkey                                                          User    Host                Created\n")
-	fmt.Printf("%s\n", divider)
-
 	var keys []ListKey
 
 	currentKeyID := repo.KeyID()
@@ -276,22 +272,28 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 		return fmt.Errorf("failed to list repository files: %w", err)
 	}
 
+	headers := []string{" ID", "Age Pubkey", "User", "Host", "Created"}
+	rows := make([][]string, 0, len(keys))
+
 	for _, key := range keys {
 		currentMarker := " "
 		if key.IsCurrent {
 			currentMarker = "*"
 		}
-		fmt.Printf("%s%-8s  %-60s  %-6s  %-18s  %s\n",
-			currentMarker,
-			key.ShortID,
+
+		markedID := currentMarker + key.ShortID
+
+		row := []string{
+			markedID,
 			key.AgePubkey,
 			key.Username,
 			key.Hostname,
 			key.Created,
-		)
+		}
+		rows = append(rows, row)
 	}
 
-	fmt.Printf("%s\n", divider)
+	printTable(headers, rows)
 
 	return nil
 }
@@ -848,4 +850,55 @@ func collectBackends() *location.Registry {
 	backends.Register(sftp.NewFactory())
 	backends.Register(swift.NewFactory())
 	return backends
+}
+
+func printTable(headers []string, rows [][]string) {
+	padding := 2
+	numCols := len(headers)
+
+	colWidths := make([]int, numCols)
+
+	for i, h := range headers {
+		if i < numCols && len(h) > colWidths[i] {
+			colWidths[i] = len(h)
+		}
+	}
+
+	for _, row := range rows {
+		for i, cell := range row {
+			if i < numCols && len(cell) > colWidths[i] {
+				colWidths[i] = len(cell)
+			}
+		}
+	}
+
+	totalWidth := 0
+	for _, w := range colWidths {
+		totalWidth += w
+	}
+	totalWidth += (numCols - 1) * padding
+
+	printRow(headers, colWidths, padding)
+	divider := strings.Repeat("-", totalWidth)
+	fmt.Println(divider)
+
+	for _, row := range rows {
+		printRow(row, colWidths, padding)
+	}
+
+	divider = strings.Repeat("-", totalWidth)
+	fmt.Println(divider)
+}
+
+func printRow(row []string, colWidths []int, padding int) {
+	for i, cell := range row {
+		if i >= len(colWidths) {
+			break
+		}
+		fmt.Printf("%-*s", colWidths[i], cell)
+		if i < len(colWidths)-1 {
+			fmt.Print(strings.Repeat(" ", padding))
+		}
+	}
+	fmt.Println()
 }
