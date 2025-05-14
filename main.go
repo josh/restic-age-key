@@ -53,6 +53,7 @@ type options struct {
 	host            string
 	user            string
 	output          string
+	timeout         time.Duration
 	dryRun          bool
 }
 
@@ -69,6 +70,14 @@ func newRootCommand() *cobra.Command {
 		recipient:       os.Getenv("RESTIC_AGE_RECIPIENT"),
 		user:            os.Getenv("RESTIC_AGE_USER"),
 		host:            os.Getenv("RESTIC_AGE_HOST"),
+	}
+
+	if timeoutStr := os.Getenv("RESTIC_AGE_TIMEOUT"); timeoutStr != "" {
+		if duration, err := time.ParseDuration(timeoutStr); err == nil {
+			options.timeout = duration
+		} else {
+			fmt.Fprintf(os.Stderr, "warn: invalid timeout format in RESTIC_AGE_TIMEOUT: %s\n", err)
+		}
 	}
 
 	if options.host == "" {
@@ -101,6 +110,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	cmd.PersistentFlags().StringVar(&options.ageBin, "age-bin", options.ageBin, "path to age binary")
 	cmd.PersistentFlags().StringVar(&options.identityFile, "identity-file", options.identityFile, "age identity file (env: RESTIC_AGE_IDENTITY_FILE)")
 	cmd.PersistentFlags().StringVar(&options.identityCommand, "identity-command", options.identityCommand, "age identity command (env: RESTIC_AGE_IDENTITY_COMMAND)")
+	cmd.PersistentFlags().DurationVar(&options.timeout, "timeout", options.timeout, "command timeout (env: RESTIC_AGE_TIMEOUT)")
 
 	addDecryptRepoCommands := func(cmd *cobra.Command) {
 		cmd.Flags().StringVar(&options.repo, "repo", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
@@ -113,7 +123,13 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		Use:   "list",
 		Short: "List all keys in the repository",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runKeyList(cmd.Context(), options, args)
+			if options.timeout > 0 {
+				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
+				defer cancel()
+				return runKeyList(ctx, options, args)
+			} else {
+				return runKeyList(cmd.Context(), options, args)
+			}
 		},
 	}
 	addDecryptRepoCommands(listCommand)
@@ -122,7 +138,13 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		Use:   "add",
 		Short: "Add a new key to the repository",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runKeyAdd(cmd.Context(), options, args)
+			if options.timeout > 0 {
+				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
+				defer cancel()
+				return runKeyAdd(ctx, options, args)
+			} else {
+				return runKeyAdd(cmd.Context(), options, args)
+			}
 		},
 	}
 	addDecryptRepoCommands(addCommand)
@@ -137,7 +159,13 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		Short: "Set keys in the repository based on a recipients file",
 		Long:  "Set command adds any pubkeys from the recipients file that aren't in the repo, ignores existing pubkeys, and removes keys from the repo that aren't present in the recipients file",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runKeySet(cmd.Context(), options, args)
+			if options.timeout > 0 {
+				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
+				defer cancel()
+				return runKeySet(ctx, options, args)
+			} else {
+				return runKeySet(cmd.Context(), options, args)
+			}
 		},
 	}
 	addDecryptRepoCommands(setCommand)
@@ -148,7 +176,13 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		Use:   "password",
 		Short: "Retrieve the password for a key",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runKeyPassword(cmd.Context(), options, args)
+			if options.timeout > 0 {
+				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
+				defer cancel()
+				return runKeyPassword(ctx, options, args)
+			} else {
+				return runKeyPassword(cmd.Context(), options, args)
+			}
 		},
 	}
 	passwordCommand.Flags().StringVar(&options.repo, "repo", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
@@ -159,7 +193,13 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		Short: "Retrieve the password for a key",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			options.repo = options.fromRepo
-			return runKeyPassword(cmd.Context(), options, args)
+			if options.timeout > 0 {
+				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
+				defer cancel()
+				return runKeyPassword(ctx, options, args)
+			} else {
+				return runKeyPassword(cmd.Context(), options, args)
+			}
 		},
 	}
 	fromPasswordCommand.Flags().StringVar(&options.fromRepo, "from-repo", options.fromRepo, "restic repository location (env: RESTIC_FROM_REPOSITORY)")
@@ -337,7 +377,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		return fmt.Errorf("failed to generate new salt: %w", err)
 	}
 
-	password, ageData, err := ageEncryptRandomKey(opts.ageBin, opts.recipient)
+	password, ageData, err := ageEncryptRandomKey(ctx, opts.ageBin, opts.recipient)
 	if err != nil {
 		return err
 	}
@@ -584,7 +624,7 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 		return "", err
 	}
 
-	closeIdentityCommand, err := readIdentityCommand(&opts)
+	closeIdentityCommand, err := readIdentityCommand(ctx, &opts)
 	if err != nil {
 		return "", fmt.Errorf("Resolving identity failed: %w", err)
 	}
@@ -617,7 +657,7 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 			return nil
 		}
 
-		password, err = ageDecryptKey(opts.ageBin, opts.identityFile, k.AgeData)
+		password, err = ageDecryptKey(ctx, opts.ageBin, opts.identityFile, k.AgeData)
 		if err != nil {
 			if strings.Contains(err.Error(), "no identity matched any of the recipients") {
 				return nil
@@ -647,17 +687,21 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 	return password, nil
 }
 
-func ageEncryptRandomKey(ageBin string, pubkey string) (string, []byte, error) {
+func ageEncryptRandomKey(ctx context.Context, ageBin string, pubkey string) (string, []byte, error) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return "", nil, fmt.Errorf("failed to generate random key: %w", err)
 	}
 
-	cmd := exec.Command(ageBin, "--encrypt", "--recipient", pubkey)
+	cmd := exec.CommandContext(ctx, ageBin, "--encrypt", "--recipient", pubkey)
 	cmd.Stdin = bytes.NewReader(key)
 
 	out, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", nil, fmt.Errorf("timeout exceeded while encrypting key with age")
+		}
+
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			return "", nil, fmt.Errorf("%s", string(exitErr.Stderr))
@@ -669,12 +713,16 @@ func ageEncryptRandomKey(ageBin string, pubkey string) (string, []byte, error) {
 	return hex.EncodeToString(key), out, nil
 }
 
-func ageDecryptKey(ageBin string, identityFile string, key []byte) (string, error) {
-	cmd := exec.Command(ageBin, "--decrypt", "--identity", identityFile)
+func ageDecryptKey(ctx context.Context, ageBin string, identityFile string, key []byte) (string, error) {
+	cmd := exec.CommandContext(ctx, ageBin, "--decrypt", "--identity", identityFile)
 	cmd.Stdin = bytes.NewReader(key)
 
 	out, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("timeout exceeded while decrypting key with age")
+		}
+
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			return "", fmt.Errorf("%s", string(exitErr.Stderr))
@@ -686,7 +734,7 @@ func ageDecryptKey(ageBin string, identityFile string, key []byte) (string, erro
 	return hex.EncodeToString(out), nil
 }
 
-func readIdentityCommand(opts *options) (func(), error) {
+func readIdentityCommand(ctx context.Context, opts *options) (func(), error) {
 	noop := func() {}
 
 	if opts.identityCommand == "" {
@@ -704,11 +752,14 @@ func readIdentityCommand(opts *options) (func(), error) {
 		return noop, fmt.Errorf("failed to split shell string: %w", err)
 	}
 
-	cmd := exec.Command(args[0], args[1:]...)
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Stderr = os.Stderr
 
 	output, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return noop, fmt.Errorf("timeout exceeded while executing identity command")
+		}
 		return noop, err
 	}
 
@@ -743,7 +794,7 @@ func writeTempFile(pattern string, data []byte) (string, func(), error) {
 	return tmpFile.Name(), closeCallback, nil
 }
 
-func readPassword(opts *options) (string, error) {
+func readPassword(ctx context.Context, opts *options) (string, error) {
 	if opts.password != "" {
 		return opts.password, nil
 	} else if opts.passwordFile != "" {
@@ -764,11 +815,14 @@ func readPassword(opts *options) (string, error) {
 			return "", err
 		}
 
-		cmd := exec.Command(args[0], args[1:]...)
+		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 		cmd.Stderr = os.Stderr
 
 		output, err := cmd.Output()
 		if err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				return "", fmt.Errorf("timeout exceeded while executing password command")
+			}
 			return "", fmt.Errorf("failed to execute password command: %w", err)
 		}
 
@@ -789,7 +843,7 @@ func openRepositoryWithPassword(ctx context.Context, opts options) (*repository.
 		return nil, nil, err
 	}
 
-	password, err := readPassword(&opts)
+	password, err := readPassword(ctx, &opts)
 	if err != nil {
 		if opts.identityFile != "" || opts.identityCommand != "" {
 			password, err = readPasswordViaIdentity(ctx, opts)
