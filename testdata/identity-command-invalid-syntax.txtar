@@ -9,4 +9,4 @@ cmp stderr password-stderr.txt
 secret
 
 -- password-stderr.txt --
-Resolving identity failed: failed to split shell string: double-quoted string not terminated
+failed to split shell string: double-quoted string not terminated

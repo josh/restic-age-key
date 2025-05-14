@@ -10,9 +10,7 @@ env PATH=$WORK:$PATH
 exec restic init
 
 ! exec restic-age-key add
-# Not reliable across restic versions
-# cmp stderr restic-age-key-stderr.txt
-stderr 'failed to wrap key for recipient #0: crash plugin'
+cmp stderr restic-age-key-stderr.txt
 
 exec restic-age-key list
 ! stdout age1crash1vehk79j4j48
@@ -27,6 +25,4 @@ echo "CRASH"
 exit 1
 
 -- restic-age-key-stderr.txt --
-age: error: failed to wrap key for recipient #0: crash plugin: malformed stanza opening line: "CRASH\n"
-age: report unexpected or unhelpful errors at https://filippo.io/age/report
-
+age: failed to parse recipient: malformed recipient "age1crash1vehk79j4j48": invalid type "age1crash"

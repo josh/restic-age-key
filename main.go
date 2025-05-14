@@ -8,12 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
 	"strings"
 	"time"
 
+	"filippo.io/age"
 	"github.com/josh/restic-api/api/backend"
 	"github.com/josh/restic-api/api/backend/azure"
 	"github.com/josh/restic-api/api/backend/b2"
@@ -35,12 +37,10 @@ import (
 
 // constants settable at build time.
 var (
-	AgeBin  = ""
 	Version = "0.1.0"
 )
 
 type options struct {
-	ageBin          string
 	repo            string
 	fromRepo        string
 	password        string
@@ -59,7 +59,6 @@ type options struct {
 
 func newRootCommand() *cobra.Command {
 	options := options{
-		ageBin:          AgeBin,
 		repo:            os.Getenv("RESTIC_REPOSITORY"),
 		fromRepo:        os.Getenv("RESTIC_FROM_REPOSITORY"),
 		password:        os.Getenv("RESTIC_PASSWORD"),
@@ -92,12 +91,6 @@ func newRootCommand() *cobra.Command {
 		}
 	}
 
-	if options.ageBin == "" {
-		if path, err := exec.LookPath("age"); err == nil {
-			options.ageBin = path
-		}
-	}
-
 	cmd := &cobra.Command{
 		Use:   "restic-age-key",
 		Short: "Manage age-based encryption keys for restic repositories",
@@ -107,7 +100,6 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		SilenceUsage:  true,
 	}
 
-	cmd.PersistentFlags().StringVar(&options.ageBin, "age-bin", options.ageBin, "path to age binary")
 	cmd.PersistentFlags().StringVar(&options.identityFile, "identity-file", options.identityFile, "age identity file (env: RESTIC_AGE_IDENTITY_FILE)")
 	cmd.PersistentFlags().StringVar(&options.identityCommand, "identity-command", options.identityCommand, "age identity command (env: RESTIC_AGE_IDENTITY_COMMAND)")
 	cmd.PersistentFlags().DurationVar(&options.timeout, "timeout", options.timeout, "command timeout (env: RESTIC_AGE_TIMEOUT)")
@@ -377,7 +369,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		return fmt.Errorf("failed to generate new salt: %w", err)
 	}
 
-	password, ageData, err := ageEncryptRandomKey(ctx, opts.ageBin, opts.recipient)
+	password, ageData, err := ageEncryptRandomKey(opts.recipient)
 	if err != nil {
 		return err
 	}
@@ -624,15 +616,53 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 		return "", err
 	}
 
-	closeIdentityCommand, err := readIdentityCommand(ctx, &opts)
-	if err != nil {
-		return "", fmt.Errorf("Resolving identity failed: %w", err)
-	}
-	defer closeIdentityCommand()
+	var identityData []byte
 
-	if opts.identityFile == "" {
+	if opts.identityFile != "" && opts.identityCommand != "" {
+		fmt.Fprintf(os.Stderr, "warn: ignoring identity-command, identity-file already set\n")
+	}
+
+	if opts.identityFile != "" {
+		data, err := os.ReadFile(opts.identityFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read identity file: %w", err)
+		}
+
+		identityData = data
+	} else if opts.identityCommand != "" {
+		args, err := backend.SplitShellStrings(opts.identityCommand)
+		if err != nil {
+			return "", fmt.Errorf("failed to split shell string: %w", err)
+		}
+
+		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+		cmd.Stderr = os.Stderr
+
+		output, err := cmd.Output()
+		if err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				return "", fmt.Errorf("timeout exceeded while executing identity command")
+			}
+			return "", err
+		}
+
+		identityData = output
+	}
+
+	if identityData == nil {
 		return "", errors.New("no identity file specified")
 	}
+
+	identities, err := age.ParseIdentities(bytes.NewReader(identityData))
+	if err != nil {
+		return "", fmt.Errorf("age: failed to parse identity: %w", err)
+	}
+	if len(identities) == 0 {
+		return "", errors.New("no identities found in identity file")
+	} else if len(identities) > 1 {
+		fmt.Fprintf(os.Stderr, "warn: multiple identities found in identity file, using first\n")
+	}
+	identity := identities[0]
 
 	var password string
 
@@ -657,7 +687,7 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 			return nil
 		}
 
-		password, err = ageDecryptKey(ctx, opts.ageBin, opts.identityFile, k.AgeData)
+		password, err = ageDecryptKey(ctx, identity, k.AgeData)
 		if err != nil {
 			if strings.Contains(err.Error(), "no identity matched any of the recipients") {
 				return nil
@@ -678,111 +708,67 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 	}
 }
 
-func ageEncryptRandomKey(ctx context.Context, ageBin string, pubkey string) (string, []byte, error) {
+func ageEncryptRandomKey(pubkeyStr string) (string, []byte, error) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
-		return "", nil, fmt.Errorf("failed to generate random key: %w", err)
+		return "", nil, fmt.Errorf("age: failed to generate random key: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, ageBin, "--encrypt", "--recipient", pubkey)
-	cmd.Stdin = bytes.NewReader(key)
-
-	out, err := cmd.Output()
+	recipient, err := age.ParseX25519Recipient(pubkeyStr)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", nil, fmt.Errorf("timeout exceeded while encrypting key with age")
-		}
-
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return "", nil, fmt.Errorf("%s", string(exitErr.Stderr))
-		}
-
-		return "", nil, fmt.Errorf("failed to encrypt key with age: %w", err)
+		return "", nil, fmt.Errorf("age: failed to parse recipient: %w", err)
 	}
 
-	return hex.EncodeToString(key), out, nil
+	var buf bytes.Buffer
+
+	w, err := age.Encrypt(&buf, recipient)
+	if err != nil {
+		return "", nil, fmt.Errorf("age: failed to create encrypted writer: %w", err)
+	}
+
+	if _, err := w.Write(key); err != nil {
+		return "", nil, fmt.Errorf("age: failed to encrypt key: %w", err)
+	}
+
+	if err := w.Close(); err != nil {
+		return "", nil, fmt.Errorf("age: failed to finalize encryption: %w", err)
+	}
+
+	return hex.EncodeToString(key), buf.Bytes(), nil
 }
 
-func ageDecryptKey(ctx context.Context, ageBin string, identityFile string, key []byte) (string, error) {
-	cmd := exec.CommandContext(ctx, ageBin, "--decrypt", "--identity", identityFile)
-	cmd.Stdin = bytes.NewReader(key)
-
-	out, err := cmd.Output()
+func ageDecryptKey(ctx context.Context, identity age.Identity, encryptedKey []byte) (string, error) {
+	r, err := ageDecryptWithTimeout(ctx, bytes.NewReader(encryptedKey), identity)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("timeout exceeded while decrypting key with age")
-		}
-
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return "", fmt.Errorf("%s", string(exitErr.Stderr))
-		}
-
-		return "", fmt.Errorf("failed to decrypt key with age: %w", err)
+		return "", fmt.Errorf("age: failed to decrypt key with age: %w", err)
 	}
 
-	return hex.EncodeToString(out), nil
+	decrypted, err := io.ReadAll(r)
+	if err != nil {
+		return "", fmt.Errorf("age: failed to read decrypted data: %w", err)
+	}
+
+	return hex.EncodeToString(decrypted), nil
 }
 
-func readIdentityCommand(ctx context.Context, opts *options) (func(), error) {
-	noop := func() {}
-
-	if opts.identityCommand == "" {
-		return noop, nil
+func ageDecryptWithTimeout(ctx context.Context, src io.Reader, identities ...age.Identity) (io.Reader, error) {
+	type result struct {
+		reader io.Reader
+		err    error
 	}
+	resultCh := make(chan result, 1)
 
-	if opts.identityFile != "" {
-		fmt.Fprintf(os.Stderr, "warn: ignoring identity-command, identity-file already set\n")
+	go func() {
+		r, err := age.Decrypt(src, identities...)
+		resultCh <- result{r, err}
+	}()
 
-		return noop, nil
+	select {
+	case result := <-resultCh:
+		return result.reader, result.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-
-	args, err := backend.SplitShellStrings(opts.identityCommand)
-	if err != nil {
-		return noop, fmt.Errorf("failed to split shell string: %w", err)
-	}
-
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.Stderr = os.Stderr
-
-	output, err := cmd.Output()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return noop, fmt.Errorf("timeout exceeded while executing identity command")
-		}
-		return noop, err
-	}
-
-	filename, closeCallback, err := writeTempFile("identity-*", output)
-	if err != nil {
-		return closeCallback, err
-	}
-
-	opts.identityFile = filename
-
-	return closeCallback, nil
-}
-
-func writeTempFile(pattern string, data []byte) (string, func(), error) {
-	tmpFile, err := os.CreateTemp("", pattern)
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to create temporary file: %w", err)
-	}
-
-	closeCallback := func() {
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
-	}
-
-	_, err = tmpFile.Write(data)
-	if err != nil {
-		closeCallback()
-
-		return "", nil, fmt.Errorf("failed to write to temporary file: %w", err)
-	}
-
-	return tmpFile.Name(), closeCallback, nil
 }
 
 func readPassword(ctx context.Context, opts *options) (string, error) {
