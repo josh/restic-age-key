@@ -663,28 +663,19 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 				return nil
 			}
 
-			if strings.Contains(err.Error(), "malformed secret key") {
-				return err
-			}
-
-			if strings.Contains(err.Error(), "unknown identity type") {
-				return err
-			}
-
-			return nil
+			return err
 		}
 
 		return nil
 	})
-	if err != nil {
-		return "", err
-	}
 
-	if password == "" {
+	if password != "" {
+		return password, nil
+	} else if err != nil {
+		return "", err
+	} else {
 		return "", errors.New("no password found")
 	}
-
-	return password, nil
 }
 
 func ageEncryptRandomKey(ctx context.Context, ageBin string, pubkey string) (string, []byte, error) {

@@ -1,0 +1,32 @@
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=localhost
+env RESTIC_AGE_RECIPIENT=age1crash1vehk79j4j48
+
+exec chmod +x age-plugin-crash
+env PATH=$WORK:$PATH
+
+exec restic init
+
+! exec restic-age-key add
+# Not reliable across restic versions
+# cmp stderr restic-age-key-stderr.txt
+stderr 'failed to wrap key for recipient #0: crash plugin'
+
+exec restic-age-key list
+! stdout age1crash1vehk79j4j48
+! stderr .
+
+-- password.txt --
+secret
+
+-- age-plugin-crash --
+#!/bin/sh
+echo "CRASH"
+exit 1
+
+-- restic-age-key-stderr.txt --
+age: error: failed to wrap key for recipient #0: crash plugin: malformed stanza opening line: "CRASH\n"
+age: report unexpected or unhelpful errors at https://filippo.io/age/report
+
