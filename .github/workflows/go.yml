@@ -7,6 +7,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    env:
+      AGE_VERSION: "1.2.1"
+      RESTIC_VERSION: "0.18.0"
 
     steps:
       - uses: actions/checkout@v4
@@ -14,21 +17,27 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install restic rclone
+          sudo apt-get install rclone
 
       - name: Install age
         run: |
+          set -o xtrace
           curl --location https://github.com/FiloSottile/age/releases/download/v${AGE_VERSION}/age-v${AGE_VERSION}-linux-amd64.tar.gz --output age.tar.gz
           tar -xzf age.tar.gz
           chmod +x age/age
           sudo mv age/age /usr/local/bin/age
-        env:
-          AGE_VERSION: "1.2.1"
+
+      - name: Install restic
+        run: |
+          set -o xtrace
+          curl --location https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_amd64.bz2 --output restic_${RESTIC_VERSION}_linux_amd64.bz2
+          bunzip2 restic_${RESTIC_VERSION}_linux_amd64.bz2
+          chmod +x restic_${RESTIC_VERSION}_linux_amd64
+          sudo mv restic_${RESTIC_VERSION}_linux_amd64 /usr/local/bin/restic
 
       - name: Print versions
         run: |
           set -o xtrace
-          restic version
           rclone --version
 
       - uses: actions/setup-go@v5
