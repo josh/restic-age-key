@@ -16,6 +16,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install age restic rclone
 
+      - name: Print versions
+        run: |
+          set -o xtrace
+          age --version
+          restic version
+          rclone --version
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
