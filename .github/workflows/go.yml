@@ -14,11 +14,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install rclone
-
       - name: Install age
         run: |
           set -o xtrace
@@ -34,11 +29,6 @@ jobs:
           bunzip2 restic_${RESTIC_VERSION}_linux_amd64.bz2
           chmod +x restic_${RESTIC_VERSION}_linux_amd64
           sudo mv restic_${RESTIC_VERSION}_linux_amd64 /usr/local/bin/restic
-
-      - name: Print versions
-        run: |
-          set -o xtrace
-          rclone --version
 
       - uses: actions/setup-go@v5
         with:
