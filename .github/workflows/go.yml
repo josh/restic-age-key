@@ -14,12 +14,20 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install age restic rclone
+          sudo apt-get install restic rclone
+
+      - name: Install age
+        run: |
+          curl --location https://github.com/FiloSottile/age/releases/download/v${AGE_VERSION}/age-v${AGE_VERSION}-linux-amd64.tar.gz --output age.tar.gz
+          tar -xzf age.tar.gz
+          chmod +x age/age
+          sudo mv age/age /usr/local/bin/age
+        env:
+          AGE_VERSION: "1.2.1"
 
       - name: Print versions
         run: |
           set -o xtrace
-          age --version
           restic version
           rclone --version
 
