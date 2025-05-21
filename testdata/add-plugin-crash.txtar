@@ -10,9 +10,7 @@ env PATH=$WORK:$PATH
 exec restic init
 
 ! exec restic-age-key add
-# Not reliable across restic versions
-# cmp stderr restic-age-key-stderr.txt
-stderr 'failed to wrap key for recipient #0: crash plugin'
+cmp stderr restic-age-key-stderr.txt
 
 exec restic-age-key list
 ! stdout age1crash1vehk79j4j48
