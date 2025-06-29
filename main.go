@@ -35,13 +35,13 @@ import (
 
 // constants settable at build time.
 var (
-	AgeBin        = ""
+	AgeProgram    = "age"
 	RcloneProgram = "rclone"
 	Version       = "0.1.2"
 )
 
 type options struct {
-	ageBin          string
+	ageProgram      string
 	rcloneProgram   string
 	repo            string
 	fromRepo        string
@@ -61,7 +61,7 @@ type options struct {
 
 func newRootCommand() *cobra.Command {
 	options := options{
-		ageBin:          AgeBin,
+		ageProgram:      AgeProgram,
 		rcloneProgram:   RcloneProgram,
 		repo:            os.Getenv("RESTIC_REPOSITORY"),
 		fromRepo:        os.Getenv("RESTIC_FROM_REPOSITORY"),
@@ -95,9 +95,9 @@ func newRootCommand() *cobra.Command {
 		}
 	}
 
-	if options.ageBin == "" {
+	if options.ageProgram == "" || options.ageProgram == "age" {
 		if path, err := exec.LookPath("age"); err == nil {
-			options.ageBin = path
+			options.ageProgram = path
 		}
 	}
 
@@ -116,7 +116,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		SilenceUsage:  true,
 	}
 
-	cmd.PersistentFlags().StringVar(&options.ageBin, "age-bin", options.ageBin, "path to age binary")
+	cmd.PersistentFlags().StringVar(&options.ageProgram, "age-program", options.ageProgram, "path to age binary")
 	cmd.PersistentFlags().StringVar(&options.rcloneProgram, "rclone-program", options.rcloneProgram, "path to rclone")
 	cmd.PersistentFlags().StringVar(&options.identityFile, "identity-file", options.identityFile, "age identity file (env: RESTIC_AGE_IDENTITY_FILE)")
 	cmd.PersistentFlags().StringVar(&options.identityCommand, "identity-command", options.identityCommand, "age identity command (env: RESTIC_AGE_IDENTITY_COMMAND)")
@@ -387,7 +387,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		return fmt.Errorf("failed to generate new salt: %w", err)
 	}
 
-	password, ageData, err := ageEncryptRandomKey(ctx, opts.ageBin, opts.recipient)
+	password, ageData, err := ageEncryptRandomKey(ctx, opts.ageProgram, opts.recipient)
 	if err != nil {
 		return err
 	}
@@ -667,7 +667,7 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 			return nil
 		}
 
-		password, err = ageDecryptKey(ctx, opts.ageBin, opts.identityFile, k.AgeData)
+		password, err = ageDecryptKey(ctx, opts.ageProgram, opts.identityFile, k.AgeData)
 		if err != nil {
 			if strings.Contains(err.Error(), "no identity matched any of the recipients") {
 				return nil
@@ -688,13 +688,13 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 	}
 }
 
-func ageEncryptRandomKey(ctx context.Context, ageBin string, pubkey string) (string, []byte, error) {
+func ageEncryptRandomKey(ctx context.Context, ageProgram string, pubkey string) (string, []byte, error) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return "", nil, fmt.Errorf("failed to generate random key: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, ageBin, "--encrypt", "--recipient", pubkey)
+	cmd := exec.CommandContext(ctx, ageProgram, "--encrypt", "--recipient", pubkey)
 	cmd.Stdin = bytes.NewReader(key)
 
 	out, err := cmd.Output()
@@ -714,8 +714,8 @@ func ageEncryptRandomKey(ctx context.Context, ageBin string, pubkey string) (str
 	return hex.EncodeToString(key), out, nil
 }
 
-func ageDecryptKey(ctx context.Context, ageBin string, identityFile string, key []byte) (string, error) {
-	cmd := exec.CommandContext(ctx, ageBin, "--decrypt", "--identity", identityFile)
+func ageDecryptKey(ctx context.Context, ageProgram string, identityFile string, key []byte) (string, error) {
+	cmd := exec.CommandContext(ctx, ageProgram, "--decrypt", "--identity", identityFile)
 	cmd.Stdin = bytes.NewReader(key)
 
 	out, err := cmd.Output()
