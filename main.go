@@ -35,12 +35,14 @@ import (
 
 // constants settable at build time.
 var (
-	AgeBin  = ""
-	Version = "0.1.2"
+	AgeBin        = ""
+	RcloneProgram = "rclone"
+	Version       = "0.1.2"
 )
 
 type options struct {
 	ageBin          string
+	rcloneProgram   string
 	repo            string
 	fromRepo        string
 	password        string
@@ -60,6 +62,7 @@ type options struct {
 func newRootCommand() *cobra.Command {
 	options := options{
 		ageBin:          AgeBin,
+		rcloneProgram:   RcloneProgram,
 		repo:            os.Getenv("RESTIC_REPOSITORY"),
 		fromRepo:        os.Getenv("RESTIC_FROM_REPOSITORY"),
 		password:        os.Getenv("RESTIC_PASSWORD"),
@@ -98,6 +101,12 @@ func newRootCommand() *cobra.Command {
 		}
 	}
 
+	if options.rcloneProgram == "" || options.rcloneProgram == "rclone" {
+		if path, err := exec.LookPath("rclone"); err == nil {
+			options.rcloneProgram = path
+		}
+	}
+
 	cmd := &cobra.Command{
 		Use:   "restic-age-key",
 		Short: "Manage age-based encryption keys for restic repositories",
@@ -108,6 +117,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	}
 
 	cmd.PersistentFlags().StringVar(&options.ageBin, "age-bin", options.ageBin, "path to age binary")
+	cmd.PersistentFlags().StringVar(&options.rcloneProgram, "rclone-program", options.rcloneProgram, "path to rclone")
 	cmd.PersistentFlags().StringVar(&options.identityFile, "identity-file", options.identityFile, "age identity file (env: RESTIC_AGE_IDENTITY_FILE)")
 	cmd.PersistentFlags().StringVar(&options.identityCommand, "identity-command", options.identityCommand, "age identity command (env: RESTIC_AGE_IDENTITY_COMMAND)")
 	cmd.PersistentFlags().DurationVar(&options.timeout, "timeout", options.timeout, "command timeout (env: RESTIC_AGE_TIMEOUT)")
@@ -861,11 +871,16 @@ func openRepository(ctx context.Context, opts options) (*repository.Repository, 
 		return nil, nil, fmt.Errorf("failed to parse repository location: %w", err)
 	}
 
+	cfg := loc.Config
+	if rcloneCfg, ok := cfg.(*rclone.Config); ok {
+		rcloneCfg.Program = opts.rcloneProgram
+	}
+
 	rt, _ := backend.Transport(backend.TransportOptions{})
 	lim := limiter.NewStaticLimiter(limiter.Limits{})
 	factory := backends.Lookup(loc.Scheme)
 
-	be, err := factory.Open(ctx, loc.Config, rt, lim)
+	be, err := factory.Open(ctx, cfg, rt, lim)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to open backend: %w", err)
 	}
