@@ -114,7 +114,11 @@ func newRootCommand() *cobra.Command {
 It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		Version:       Version,
 	}
+
+	cmd.Flags().BoolP("version", "V", false, "version for restic-age-key")
+	cmd.SetVersionTemplate("{{.Version}}\n")
 
 	cmd.PersistentFlags().StringVar(&options.ageProgram, "age-program", options.ageProgram, "path to age binary")
 	cmd.PersistentFlags().StringVar(&options.rcloneProgram, "rclone-program", options.rcloneProgram, "path to rclone")

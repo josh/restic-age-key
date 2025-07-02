@@ -1,0 +1,7 @@
+exec restic-age-key --version
+stdout '[0-9]+\.[0-9]+\.[0-9]+'
+! stderr .
+
+exec restic-age-key -V
+stdout '[0-9]+\.[0-9]+\.[0-9]+'
+! stderr .
