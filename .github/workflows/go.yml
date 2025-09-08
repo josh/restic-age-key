@@ -30,7 +30,7 @@ jobs:
           chmod +x restic_${RESTIC_VERSION}_linux_amd64
           sudo mv restic_${RESTIC_VERSION}_linux_amd64 /usr/local/bin/restic
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
