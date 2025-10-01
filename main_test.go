@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"strconv"
 	"testing"
 
 	"github.com/rogpeppe/go-internal/testscript"
@@ -13,9 +15,11 @@ func TestMain(m *testing.M) {
 }
 
 func TestScript(t *testing.T) {
+	updateScripts, _ := strconv.ParseBool(os.Getenv("UPDATE_SCRIPTS"))
+
 	testscript.Run(t, testscript.Params{
 		Dir:             "testdata",
 		ContinueOnError: true,
-		// UpdateScripts:   true,
+		UpdateScripts:   updateScripts,
 	})
 }
