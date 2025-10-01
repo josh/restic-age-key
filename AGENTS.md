@@ -27,6 +27,8 @@ go test -cover ./...
 
 The test suite uses [testscript](https://pkg.go.dev/github.com/rogpeppe/go-internal/testscript). Test files live in the `testdata` directory and contain scripts that execute commands and compare their output. These tests differ from standard Go tests because they drive the program via shell-like scripts instead of calling functions directly.
 
+Set the environment variable `UPDATE_SCRIPTS=true` when running tests to enable automatic updates of testscript output files.
+
 ## Formatting
 
 Format code with:
