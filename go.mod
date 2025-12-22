@@ -7,7 +7,7 @@ toolchain go1.24.1
 require (
 	github.com/josh/restic-api v0.18.1
 	github.com/rogpeppe/go-internal v1.14.1
-	github.com/spf13/cobra v1.10.1
+	github.com/spf13/cobra v1.10.2
 )
 
 require (
