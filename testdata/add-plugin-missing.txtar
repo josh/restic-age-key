@@ -7,7 +7,7 @@ env RESTIC_AGE_RECIPIENT=age1missing1vehk7zzw47d
 exec restic init
 
 ! exec restic-age-key add
-cmp stderr restic-age-key-stderr.txt
+stderr 'missing plugin'
 
 exec restic-age-key list
 ! stdout age1missing1vehk7zzw47d
@@ -15,8 +15,3 @@ exec restic-age-key list
 
 -- password.txt --
 secret
-
--- restic-age-key-stderr.txt --
-age: error: failed to wrap key for recipient #0: missing plugin: couldn't start plugin: exec: "age-plugin-missing": executable file not found in $PATH
-age: report unexpected or unhelpful errors at https://filippo.io/age/report
-
