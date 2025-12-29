@@ -6,10 +6,27 @@ on:
 
 jobs:
   test:
+    name: "test (age ${{ matrix.age_version }}, restic ${{ matrix.restic_version }})"
     runs-on: ubuntu-24.04
+
+    strategy:
+      matrix:
+        include:
+          # nixos-25.05
+          - age_version: "1.2.1"
+            restic_version: "0.18.0"
+
+          # nixos-25.11
+          - age_version: "1.2.1"
+            restic_version: "0.18.1"
+
+          # nixpkgs-unstable
+          - age_version: "1.3.1"
+            restic_version: "0.18.1"
+
     env:
-      AGE_VERSION: "1.2.1"
-      RESTIC_VERSION: "0.18.1"
+      AGE_VERSION: "${{ matrix.age_version }}"
+      RESTIC_VERSION: "${{ matrix.restic_version }}"
 
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
