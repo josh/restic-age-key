@@ -1,0 +1,12 @@
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=localhost
+env RESTIC_PASSWORD=test
+
+exec restic init --repo $WORK/repo
+
+! exec restic-age-key repo-init --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt
+! stdout .
+stderr 'config file already exists'
+
+-- key.txt --
+AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY

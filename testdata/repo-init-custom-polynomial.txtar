@@ -1,0 +1,14 @@
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=localhost
+
+exec restic-age-key repo-init --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --chunker-polynomial 0x3DA3358B4DC173 --identity-file $WORK/key.txt
+stderr 'created restic repository'
+! stdout .
+
+exec restic-age-key password --repo $WORK/repo --identity-file $WORK/key.txt --output $WORK/password.txt
+
+exec restic cat config --repo $WORK/repo --password-file $WORK/password.txt
+stdout '3da3358b4dc173'
+
+-- key.txt --
+AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY

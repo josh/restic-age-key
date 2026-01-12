@@ -1,0 +1,6 @@
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=localhost
+
+! exec restic-age-key repo-init --repo $WORK/repo
+! stdout .
+stderr 'Fatal: Please specify recipient'

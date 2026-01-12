@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/josh/restic-api/api/repository"
 	"github.com/josh/restic-api/api/restic"
 	"github.com/josh/restic-api/api/textfile"
+	"github.com/restic/chunker"
 	"github.com/spf13/cobra"
 )
 
@@ -41,22 +43,23 @@ var (
 )
 
 type options struct {
-	ageProgram      string
-	rcloneProgram   string
-	repo            string
-	fromRepo        string
-	password        string
-	passwordFile    string
-	passwordCommand string
-	identityFile    string
-	identityCommand string
-	recipient       string
-	recipientsFile  string
-	host            string
-	user            string
-	output          string
-	timeout         time.Duration
-	dryRun          bool
+	ageProgram        string
+	rcloneProgram     string
+	repo              string
+	fromRepo          string
+	password          string
+	passwordFile      string
+	passwordCommand   string
+	identityFile      string
+	identityCommand   string
+	recipient         string
+	recipientsFile    string
+	host              string
+	user              string
+	output            string
+	timeout           time.Duration
+	dryRun            bool
+	chunkerPolynomial string
 }
 
 func newRootCommand() *cobra.Command {
@@ -216,12 +219,33 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	fromPasswordCommand.Flags().StringVar(&options.fromRepo, "from-repo", options.fromRepo, "restic repository location (env: RESTIC_FROM_REPOSITORY)")
 	fromPasswordCommand.Flags().StringVar(&options.output, "output", "", "output file to write password to")
 
+	repoInitCommand := &cobra.Command{
+		Use:   "repo-init",
+		Short: "Initialize a new repository with an age encrypted key",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if options.timeout > 0 {
+				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
+				defer cancel()
+				return runRepoInit(ctx, options, args)
+			} else {
+				return runRepoInit(cmd.Context(), options, args)
+			}
+		},
+	}
+	repoInitCommand.Flags().StringVarP(&options.repo, "repo", "r", options.repo, "repository location (env: RESTIC_REPOSITORY)")
+	repoInitCommand.Flags().StringVar(&options.recipient, "recipient", options.recipient, "age recipient public key (env: RESTIC_AGE_RECIPIENT)")
+	repoInitCommand.Flags().StringVar(&options.user, "user", options.user, "username for key (env: RESTIC_AGE_USER)")
+	repoInitCommand.Flags().StringVar(&options.host, "host", options.host, "hostname for key (env: RESTIC_AGE_HOST)")
+	repoInitCommand.Flags().StringVar(&options.chunkerPolynomial, "chunker-polynomial", "", "chunker polynomial in hex format (e.g. 0x3DA3358B4DC173)")
+	repoInitCommand.Flags().StringVar(&options.output, "output", "", "output file to write key ID to")
+
 	cmd.AddCommand(
 		listCommand,
 		addCommand,
 		setCommand,
 		passwordCommand,
 		fromPasswordCommand,
+		repoInitCommand,
 	)
 
 	return cmd
@@ -349,6 +373,80 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 	return nil
 }
 
+func buildAndSaveAgeKey(ctx context.Context, ageProgram, recipient, host, user string, repo *repository.Repository, be backend.Backend, dryRun bool) (restic.ID, error) {
+	params, err := crypto.Calibrate(500*time.Millisecond, 60)
+	if err != nil {
+		return restic.ID{}, fmt.Errorf("failed to calibrate crypto parameters: %w", err)
+	}
+
+	newkey := &AgeKey{
+		Created: time.Now(),
+		KDF:     "scrypt",
+		N:       params.N,
+		R:       params.R,
+		P:       params.P,
+	}
+
+	newkey.Hostname = host
+	if newkey.Hostname == "" {
+		return restic.ID{}, errors.New("hostname is empty")
+	}
+
+	newkey.Username = user
+	if newkey.Username == "" {
+		return restic.ID{}, errors.New("username is empty")
+	}
+
+	newkey.Salt, err = crypto.NewSalt()
+	if err != nil {
+		return restic.ID{}, fmt.Errorf("failed to generate new salt: %w", err)
+	}
+
+	password, ageData, err := ageEncryptRandomKey(ctx, ageProgram, recipient)
+	if err != nil {
+		return restic.ID{}, err
+	}
+
+	newkey.AgePubkey = recipient
+	newkey.AgeData = ageData
+
+	userKey, err := crypto.KDF(params, newkey.Salt, password)
+	if err != nil {
+		return restic.ID{}, fmt.Errorf("failed to generate key from password: %w", err)
+	}
+
+	if repo.Key() == nil {
+		return restic.ID{}, errors.New("repo master key not loaded")
+	}
+
+	buf, err := json.Marshal(repo.Key())
+	if err != nil {
+		return restic.ID{}, fmt.Errorf("failed to marshal repository key: %w", err)
+	}
+
+	nonce := crypto.NewRandomNonce()
+	ciphertext := make([]byte, 0, crypto.CiphertextLength(len(buf)))
+	ciphertext = append(ciphertext, nonce...)
+	ciphertext = userKey.Seal(ciphertext, nonce, buf, nil)
+	newkey.Data = ciphertext
+
+	buf, err = json.Marshal(newkey)
+	if err != nil {
+		return restic.ID{}, fmt.Errorf("failed to marshal new key: %w", err)
+	}
+
+	id := restic.Hash(buf)
+	h := backend.Handle{Type: restic.KeyFile, Name: id.String()}
+	if !dryRun {
+		err = be.Save(ctx, h, backend.NewByteReader(buf, be.Hasher()))
+		if err != nil {
+			return restic.ID{}, fmt.Errorf("failed to save key to backend: %w", err)
+		}
+	}
+
+	return id, nil
+}
+
 func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	repo, be, err := openRepositoryWithPassword(ctx, opts)
 	if err != nil {
@@ -359,88 +457,17 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		return errors.New("Fatal: Please specify recipient (-r or --recipient)")
 	}
 
-	params, err := crypto.Calibrate(500*time.Millisecond, 60)
-	if err != nil {
-		return fmt.Errorf("failed to calibrate crypto parameters: %w", err)
-	}
-
-	newkey := &AgeKey{
-		Created: time.Now(),
-		KDF:     "scrypt",
-
-		N: params.N,
-		R: params.R,
-		P: params.P,
-	}
-
-	newkey.Hostname = opts.host
-	if newkey.Hostname == "" {
-		return errors.New("hostname is empty")
-	}
-
-	newkey.Username = opts.user
-	if newkey.Username == "" {
-		return errors.New("username is empty")
-	}
-
-	newkey.Salt, err = crypto.NewSalt()
-	if err != nil {
-		return fmt.Errorf("failed to generate new salt: %w", err)
-	}
-
-	password, ageData, err := ageEncryptRandomKey(ctx, opts.ageProgram, opts.recipient)
+	id, err := buildAndSaveAgeKey(ctx, opts.ageProgram, opts.recipient, opts.host, opts.user, repo, be, opts.dryRun)
 	if err != nil {
 		return err
 	}
 
-	newkey.AgePubkey = opts.recipient
-	newkey.AgeData = ageData
-
-	user, err := crypto.KDF(params, newkey.Salt, password)
-	if err != nil {
-		return fmt.Errorf("failed to generate key from password: %w", err)
-	}
-
-	if repo.Key() == nil {
-		return errors.New("repo master key not loaded")
-	}
-
-	buf, err := json.Marshal(repo.Key())
-	if err != nil {
-		return fmt.Errorf("failed to marshal repository key: %w", err)
-	}
-
-	nonce := crypto.NewRandomNonce()
-	ciphertext := make([]byte, 0, crypto.CiphertextLength(len(buf)))
-	ciphertext = append(ciphertext, nonce...)
-	ciphertext = user.Seal(ciphertext, nonce, buf, nil)
-	newkey.Data = ciphertext
-
-	buf, err = json.Marshal(newkey)
-	if err != nil {
-		return fmt.Errorf("failed to marshal new key: %w", err)
-	}
-
-	id := restic.Hash(buf)
-	h := backend.Handle{
-		Type: restic.KeyFile,
-		Name: id.String(),
-	}
-
-	logPrefix := ""
 	if opts.dryRun {
-		logPrefix = "[DRY RUN] "
-	}
-	fmt.Fprintf(os.Stderr, "%sAdd key %s for %s@%s\n", logPrefix, opts.recipient, opts.user, opts.host)
-
-	if opts.dryRun {
+		fmt.Fprintf(os.Stderr, "[DRY RUN] Add key %s for %s@%s\n", opts.recipient, opts.user, opts.host)
 		return nil
 	}
 
-	err = be.Save(ctx, h, backend.NewByteReader(buf, be.Hasher()))
-	if err != nil {
-		return fmt.Errorf("failed to save key to backend: %w", err)
-	}
+	fmt.Fprintf(os.Stderr, "Add key %s for %s@%s\n", opts.recipient, opts.user, opts.host)
 
 	if opts.output != "" {
 		file, err := os.OpenFile(opts.output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
@@ -484,6 +511,149 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 	}
 
 	return nil
+}
+
+func runRepoInit(ctx context.Context, opts options, args []string) error {
+	if opts.repo == "" {
+		return errors.New("Fatal: Please specify repository location (-r or --repo)")
+	}
+
+	if opts.recipient == "" {
+		return errors.New("Fatal: Please specify recipient (--recipient)")
+	}
+
+	pol, err := getChunkerPolynomial(opts)
+	if err != nil {
+		return fmt.Errorf("failed to get chunker polynomial: %w", err)
+	}
+
+	var tempPasswordBuf [32]byte
+	if _, err := rand.Read(tempPasswordBuf[:]); err != nil {
+		return fmt.Errorf("failed to generate temporary password: %w", err)
+	}
+	tempPassword := hex.EncodeToString(tempPasswordBuf[:])
+
+	repo, be, repoID, err := initializeRepository(ctx, opts, tempPassword, pol)
+	if err != nil {
+		return err
+	}
+
+	if err := repo.SearchKey(ctx, tempPassword, 1, ""); err != nil {
+		return fmt.Errorf("failed to load master key: %w", err)
+	}
+
+	ageKeyID, err := buildAndSaveAgeKey(ctx, opts.ageProgram, opts.recipient, opts.host, opts.user, repo, be, false)
+	if err != nil {
+		return fmt.Errorf("failed to create age key: %w", err)
+	}
+
+	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
+		if id.Equal(ageKeyID) {
+			return nil
+		}
+		h := backend.Handle{Type: restic.KeyFile, Name: id.String()}
+		return be.Remove(ctx, h)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to remove temporary password key: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "created restic repository %s at %s\n", repoID.Str(), opts.repo)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Please note that knowledge of your age identity is required to access")
+	fmt.Fprintln(os.Stderr, "the repository. Losing your identity means that your data is")
+	fmt.Fprintln(os.Stderr, "irrecoverably lost.")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "repository version: 2")
+	fmt.Fprintf(os.Stderr, "  age key %s for %s@%s\n", ageKeyID.Str()[0:8], opts.user, opts.host)
+
+	if opts.output != "" {
+		file, err := os.Create(opts.output)
+		if err != nil {
+			return fmt.Errorf("failed to create output file: %w", err)
+		}
+		defer file.Close()
+
+		_, err = file.WriteString(ageKeyID.Str()[0:8] + "\n")
+		if err != nil {
+			return fmt.Errorf("failed to write to output file: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func parseChunkerPolynomial(hexStr string) (*chunker.Pol, error) {
+	if hexStr == "" {
+		return nil, nil
+	}
+
+	val, err := strconv.ParseUint(hexStr, 0, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid chunker polynomial: %w", err)
+	}
+
+	pol := chunker.Pol(val)
+	return &pol, nil
+}
+
+func getChunkerPolynomial(opts options) (*chunker.Pol, error) {
+	pol, err := parseChunkerPolynomial(opts.chunkerPolynomial)
+	if err != nil {
+		return nil, err
+	}
+
+	if pol != nil {
+		return pol, nil
+	}
+
+	randomPol, err := chunker.RandomPolynomial()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate random polynomial: %w", err)
+	}
+	return &randomPol, nil
+}
+
+func initializeRepository(ctx context.Context, opts options, password string, pol *chunker.Pol) (*repository.Repository, backend.Backend, restic.ID, error) {
+	backends := collectBackends()
+
+	loc, err := location.Parse(backends, opts.repo)
+	if err != nil {
+		return nil, nil, restic.ID{}, fmt.Errorf("failed to parse repository location: %w", err)
+	}
+
+	cfg := loc.Config
+	if rcloneCfg, ok := cfg.(*rclone.Config); ok {
+		rcloneCfg.Program = opts.rcloneProgram
+	}
+
+	rt, _ := backend.Transport(backend.TransportOptions{})
+	lim := limiter.NewStaticLimiter(limiter.Limits{})
+	factory := backends.Lookup(loc.Scheme)
+
+	be, err := factory.Create(ctx, cfg, rt, lim)
+	if err != nil {
+		return nil, nil, restic.ID{}, fmt.Errorf("failed to create backend: %w", err)
+	}
+
+	repo, err := repository.New(be, repository.Options{})
+	if err != nil {
+		return nil, nil, restic.ID{}, fmt.Errorf("failed to initialize repository: %w", err)
+	}
+
+	err = repo.Init(ctx, 2, password, pol)
+	if err != nil {
+		return nil, nil, restic.ID{}, fmt.Errorf("failed to initialize repository: %w", err)
+	}
+
+	repoCfg := repo.Config()
+
+	id, err2 := restic.ParseID(repoCfg.ID)
+	if err2 != nil {
+		return nil, nil, restic.ID{}, fmt.Errorf("failed to parse repository ID: %w", err2)
+	}
+
+	return repo, be, id, nil
 }
 
 func runKeySet(ctx context.Context, opts options, args []string) error {
