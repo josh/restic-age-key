@@ -64,18 +64,19 @@ type options struct {
 
 func newRootCommand() *cobra.Command {
 	options := options{
-		ageProgram:      AgeProgram,
-		rcloneProgram:   RcloneProgram,
-		repo:            os.Getenv("RESTIC_REPOSITORY"),
-		fromRepo:        os.Getenv("RESTIC_FROM_REPOSITORY"),
-		password:        os.Getenv("RESTIC_PASSWORD"),
-		passwordFile:    os.Getenv("RESTIC_PASSWORD_FILE"),
-		passwordCommand: os.Getenv("RESTIC_PASSWORD_COMMAND"),
-		identityFile:    os.Getenv("RESTIC_AGE_IDENTITY_FILE"),
-		identityCommand: os.Getenv("RESTIC_AGE_IDENTITY_COMMAND"),
-		recipient:       os.Getenv("RESTIC_AGE_RECIPIENT"),
-		user:            os.Getenv("RESTIC_AGE_USER"),
-		host:            os.Getenv("RESTIC_AGE_HOST"),
+		ageProgram:        AgeProgram,
+		rcloneProgram:     RcloneProgram,
+		repo:              os.Getenv("RESTIC_REPOSITORY"),
+		fromRepo:          os.Getenv("RESTIC_FROM_REPOSITORY"),
+		password:          os.Getenv("RESTIC_PASSWORD"),
+		passwordFile:      os.Getenv("RESTIC_PASSWORD_FILE"),
+		passwordCommand:   os.Getenv("RESTIC_PASSWORD_COMMAND"),
+		identityFile:      os.Getenv("RESTIC_AGE_IDENTITY_FILE"),
+		identityCommand:   os.Getenv("RESTIC_AGE_IDENTITY_COMMAND"),
+		recipient:         os.Getenv("RESTIC_AGE_RECIPIENT"),
+		user:              os.Getenv("RESTIC_AGE_USER"),
+		host:              os.Getenv("RESTIC_AGE_HOST"),
+		chunkerPolynomial: os.Getenv("RESTIC_AGE_CHUNKER_POLYNOMIAL"),
 	}
 
 	if timeoutStr := os.Getenv("RESTIC_AGE_TIMEOUT"); timeoutStr != "" {
@@ -236,7 +237,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	repoInitCommand.Flags().StringVar(&options.recipient, "recipient", options.recipient, "age recipient public key (env: RESTIC_AGE_RECIPIENT)")
 	repoInitCommand.Flags().StringVar(&options.user, "user", options.user, "username for key (env: RESTIC_AGE_USER)")
 	repoInitCommand.Flags().StringVar(&options.host, "host", options.host, "hostname for key (env: RESTIC_AGE_HOST)")
-	repoInitCommand.Flags().StringVar(&options.chunkerPolynomial, "chunker-polynomial", "", "chunker polynomial in hex format (e.g. 0x3DA3358B4DC173)")
+	repoInitCommand.Flags().StringVar(&options.chunkerPolynomial, "chunker-polynomial", options.chunkerPolynomial, "chunker polynomial in hex format (e.g. 0x3DA3358B4DC173) (env: RESTIC_AGE_CHUNKER_POLYNOMIAL)")
 	repoInitCommand.Flags().StringVar(&options.output, "output", "", "output file to write key ID to")
 
 	cmd.AddCommand(
