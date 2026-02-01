@@ -297,7 +297,7 @@ type ListKey struct {
 
 func runKeyList(ctx context.Context, opts options, args []string) error {
 	if opts.repo == "" {
-		return errors.New("Fatal: Please specify repository location (-r or --repository-file)")
+		return errors.New("Fatal: Please specify repository location (-r or --repository-file)") //nolint:staticcheck
 	}
 
 	repo, _, err := openRepositoryWithPassword(ctx, opts)
@@ -455,7 +455,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	}
 
 	if opts.recipient == "" {
-		return errors.New("Fatal: Please specify recipient (-r or --recipient)")
+		return errors.New("Fatal: Please specify recipient (-r or --recipient)") //nolint:staticcheck
 	}
 
 	id, err := buildAndSaveAgeKey(ctx, opts.ageProgram, opts.recipient, opts.host, opts.user, repo, be, opts.dryRun)
@@ -475,7 +475,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to write key id to file: %w", err)
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		_, err = file.WriteString(id.String()[0:8] + "\n")
 		if err != nil {
@@ -488,7 +488,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 
 func runKeyPassword(ctx context.Context, opts options, args []string) error {
 	if opts.repo == "" {
-		return errors.New("Fatal: Please specify repository location (-r or --repository-file)")
+		return errors.New("Fatal: Please specify repository location (-r or --repository-file)") //nolint:staticcheck
 	}
 
 	password, err := readPasswordViaIdentity(ctx, opts)
@@ -502,7 +502,7 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 			return fmt.Errorf("failed to write password to file: %w", err)
 		}
 
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		if _, err := file.WriteString(password + "\n"); err != nil {
 			return fmt.Errorf("failed to write password to file: %w", err)
@@ -516,11 +516,11 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 
 func runRepoInit(ctx context.Context, opts options, args []string) error {
 	if opts.repo == "" {
-		return errors.New("Fatal: Please specify repository location (-r or --repo)")
+		return errors.New("Fatal: Please specify repository location (-r or --repo)") //nolint:staticcheck
 	}
 
 	if opts.recipient == "" {
-		return errors.New("Fatal: Please specify recipient (--recipient)")
+		return errors.New("Fatal: Please specify recipient (--recipient)") //nolint:staticcheck
 	}
 
 	pol, err := getChunkerPolynomial(opts)
@@ -573,7 +573,7 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to create output file: %w", err)
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		_, err = file.WriteString(ageKeyID.Str()[0:8] + "\n")
 		if err != nil {
@@ -659,16 +659,16 @@ func initializeRepository(ctx context.Context, opts options, password string, po
 
 func runKeySet(ctx context.Context, opts options, args []string) error {
 	if opts.repo == "" {
-		return errors.New("Fatal: Please specify repository location (-r or --repository-file)")
+		return errors.New("Fatal: Please specify repository location (-r or --repository-file)") //nolint:staticcheck
 	}
 
 	if opts.recipientsFile == "" {
-		return errors.New("Fatal: Please specify recipients file (--recipients-file)")
+		return errors.New("Fatal: Please specify recipients file (--recipients-file)") //nolint:staticcheck
 	}
 
 	setRecipients, err := readRecipientsFile(opts.recipientsFile)
 	if err != nil {
-		return errors.New("Fatal: Unable to read recipients file")
+		return errors.New("Fatal: Unable to read recipients file") //nolint:staticcheck
 	}
 
 	repo, be, err := openRepositoryWithPassword(ctx, opts)
@@ -808,7 +808,7 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 
 	closeIdentityCommand, err := readIdentityCommand(ctx, &opts)
 	if err != nil {
-		return "", fmt.Errorf("Resolving identity failed: %w", err)
+		return "", fmt.Errorf("Resolving identity failed: %w", err) //nolint:staticcheck
 	}
 	defer closeIdentityCommand()
 
@@ -953,8 +953,8 @@ func writeTempFile(pattern string, data []byte) (string, func(), error) {
 	}
 
 	closeCallback := func() {
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
 	}
 
 	_, err = tmpFile.Write(data)
@@ -1023,7 +1023,7 @@ func openRepositoryWithPassword(ctx context.Context, opts options) (*repository.
 		}
 
 		if err != nil {
-			return nil, nil, fmt.Errorf("Fatal: Resolving password failed: %w", err)
+			return nil, nil, fmt.Errorf("Fatal: Resolving password failed: %w", err) //nolint:staticcheck
 		}
 	}
 
