@@ -74,6 +74,7 @@ func newRootCommand() *cobra.Command {
 		identityFile:      os.Getenv("RESTIC_AGE_IDENTITY_FILE"),
 		identityCommand:   os.Getenv("RESTIC_AGE_IDENTITY_COMMAND"),
 		recipient:         os.Getenv("RESTIC_AGE_RECIPIENT"),
+		recipientsFile:    os.Getenv("RESTIC_AGE_RECIPIENTS_FILE"),
 		user:              os.Getenv("RESTIC_AGE_USER"),
 		host:              os.Getenv("RESTIC_AGE_HOST"),
 		chunkerPolynomial: os.Getenv("RESTIC_AGE_CHUNKER_POLYNOMIAL"),
@@ -184,7 +185,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		},
 	}
 	addDecryptRepoCommands(setCommand)
-	setCommand.Flags().StringVar(&options.recipientsFile, "recipients-file", "", "file containing age recipient public keys")
+	setCommand.Flags().StringVar(&options.recipientsFile, "recipients-file", options.recipientsFile, "file containing age recipient public keys (env: RESTIC_AGE_RECIPIENTS_FILE)")
 	setCommand.Flags().BoolVar(&options.dryRun, "dry-run", false, "do not add or remove keys, just show what would be done")
 
 	passwordCommand := &cobra.Command{
@@ -235,6 +236,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	}
 	repoInitCommand.Flags().StringVarP(&options.repo, "repo", "r", options.repo, "repository location (env: RESTIC_REPOSITORY)")
 	repoInitCommand.Flags().StringVar(&options.recipient, "recipient", options.recipient, "age recipient public key (env: RESTIC_AGE_RECIPIENT)")
+	repoInitCommand.Flags().StringVar(&options.recipientsFile, "recipients-file", options.recipientsFile, "file containing age recipient public keys (env: RESTIC_AGE_RECIPIENTS_FILE)")
 	repoInitCommand.Flags().StringVar(&options.user, "user", options.user, "username for key (env: RESTIC_AGE_USER)")
 	repoInitCommand.Flags().StringVar(&options.host, "host", options.host, "hostname for key (env: RESTIC_AGE_HOST)")
 	repoInitCommand.Flags().StringVar(&options.chunkerPolynomial, "chunker-polynomial", options.chunkerPolynomial, "chunker polynomial in hex format (e.g. 0x3DA3358B4DC173) (env: RESTIC_AGE_CHUNKER_POLYNOMIAL)")
@@ -519,8 +521,12 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 		return errors.New("Fatal: Please specify repository location (-r or --repo)") //nolint:staticcheck
 	}
 
-	if opts.recipient == "" {
-		return errors.New("Fatal: Please specify recipient (--recipient)") //nolint:staticcheck
+	if opts.recipient == "" && opts.recipientsFile == "" {
+		return errors.New("Fatal: Please specify recipient (--recipient) or recipients file (--recipients-file)") //nolint:staticcheck
+	}
+
+	if opts.recipient != "" && opts.recipientsFile != "" {
+		return errors.New("Fatal: Cannot specify both --recipient and --recipients-file") //nolint:staticcheck
 	}
 
 	pol, err := getChunkerPolynomial(opts)
@@ -543,14 +549,47 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 		return fmt.Errorf("failed to load master key: %w", err)
 	}
 
-	ageKeyID, err := buildAndSaveAgeKey(ctx, opts.ageProgram, opts.recipient, opts.host, opts.user, repo, be, false)
-	if err != nil {
-		return fmt.Errorf("failed to create age key: %w", err)
+	var ageKeyIDs []restic.ID
+
+	if opts.recipientsFile != "" {
+		recipients, err := readRecipientsFile(opts.recipientsFile)
+		if err != nil {
+			return fmt.Errorf("failed to read recipients file: %w", err)
+		}
+
+		if len(recipients) == 0 {
+			return errors.New("Fatal: Recipients file contains no recipients") //nolint:staticcheck
+		}
+
+		for _, recipient := range recipients {
+			host := recipient.Host
+			if host == "" {
+				host = opts.host
+			}
+			user := recipient.User
+			if user == "" {
+				user = opts.user
+			}
+
+			ageKeyID, err := buildAndSaveAgeKey(ctx, opts.ageProgram, recipient.Pubkey, host, user, repo, be, false)
+			if err != nil {
+				return fmt.Errorf("failed to create age key for %s: %w", recipient.Pubkey, err)
+			}
+			ageKeyIDs = append(ageKeyIDs, ageKeyID)
+		}
+	} else {
+		ageKeyID, err := buildAndSaveAgeKey(ctx, opts.ageProgram, opts.recipient, opts.host, opts.user, repo, be, false)
+		if err != nil {
+			return fmt.Errorf("failed to create age key: %w", err)
+		}
+		ageKeyIDs = append(ageKeyIDs, ageKeyID)
 	}
 
 	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
-		if id.Equal(ageKeyID) {
-			return nil
+		for _, ageKeyID := range ageKeyIDs {
+			if id.Equal(ageKeyID) {
+				return nil
+			}
 		}
 		h := backend.Handle{Type: restic.KeyFile, Name: id.String()}
 		return be.Remove(ctx, h)
@@ -566,7 +605,23 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 	fmt.Fprintln(os.Stderr, "irrecoverably lost.")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "repository version: 2")
-	fmt.Fprintf(os.Stderr, "  age key %s for %s@%s\n", ageKeyID.Str()[0:8], opts.user, opts.host)
+
+	if opts.recipientsFile != "" {
+		recipients, _ := readRecipientsFile(opts.recipientsFile)
+		for i, ageKeyID := range ageKeyIDs {
+			host := recipients[i].Host
+			if host == "" {
+				host = opts.host
+			}
+			user := recipients[i].User
+			if user == "" {
+				user = opts.user
+			}
+			fmt.Fprintf(os.Stderr, "  age key %s for %s@%s\n", ageKeyID.Str()[0:8], user, host)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "  age key %s for %s@%s\n", ageKeyIDs[0].Str()[0:8], opts.user, opts.host)
+	}
 
 	if opts.output != "" {
 		file, err := os.Create(opts.output)
@@ -575,9 +630,11 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 		}
 		defer func() { _ = file.Close() }()
 
-		_, err = file.WriteString(ageKeyID.Str()[0:8] + "\n")
-		if err != nil {
-			return fmt.Errorf("failed to write to output file: %w", err)
+		for _, ageKeyID := range ageKeyIDs {
+			_, err = file.WriteString(ageKeyID.Str()[0:8] + "\n")
+			if err != nil {
+				return fmt.Errorf("failed to write to output file: %w", err)
+			}
 		}
 	}
 

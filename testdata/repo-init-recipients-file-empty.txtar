@@ -1,0 +1,9 @@
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=localhost
+
+! exec restic-age-key repo-init --repo $WORK/repo --recipients-file $WORK/recipients.json
+! stdout .
+stderr 'Fatal: Recipients file contains no recipients'
+
+-- recipients.json --
+[]

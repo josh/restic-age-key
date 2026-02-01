@@ -1,0 +1,11 @@
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=localhost
+
+! exec restic-age-key repo-init --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --recipients-file $WORK/recipients.json
+! stdout .
+stderr 'Fatal: Cannot specify both --recipient and --recipients-file'
+
+-- recipients.json --
+[
+    { "host": "alice.local", "user": "alice", "pubkey": "age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7" }
+]
