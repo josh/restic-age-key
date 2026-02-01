@@ -39,7 +39,7 @@ import (
 var (
 	AgeProgram    = "age"
 	RcloneProgram = "rclone"
-	Version       = "1.1.0"
+	Version       = "1.1.1"
 )
 
 type options struct {
