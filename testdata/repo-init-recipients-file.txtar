@@ -1,0 +1,27 @@
+env RESTIC_AGE_USER=default
+env RESTIC_AGE_HOST=default.local
+
+exec restic-age-key repo-init --repo $WORK/repo --recipients-file $WORK/recipients.json --identity-file $WORK/key.txt
+stderr 'created restic repository [a-f0-9]{8} at'
+stderr 'repository version: 2'
+stderr 'age key [a-f0-9]{8} for alice@alice.local'
+stderr 'age key [a-f0-9]{8} for bob@bob.local'
+! stdout .
+
+exec restic-age-key password --repo $WORK/repo --identity-file $WORK/key.txt
+stdout [a-f0-9]{64}
+! stderr .
+
+exec restic-age-key list --repo $WORK/repo --identity-file $WORK/key.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
+stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
+! stderr .
+
+-- key.txt --
+AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY
+
+-- recipients.json --
+[
+    { "host": "alice.local", "user": "alice", "pubkey": "age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7" },
+    { "host": "bob.local", "user": "bob", "pubkey": "age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw" }
+]

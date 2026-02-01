@@ -3,4 +3,4 @@ env RESTIC_AGE_HOST=localhost
 
 ! exec restic-age-key repo-init --repo $WORK/repo
 ! stdout .
-stderr 'Fatal: Please specify recipient'
+stderr 'Fatal: Please specify recipient \(--recipient\) or recipients file \(--recipients-file\)'
