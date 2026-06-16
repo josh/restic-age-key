@@ -689,7 +689,7 @@ func initializeRepository(ctx context.Context, opts options, password string, po
 	lim := limiter.NewStaticLimiter(limiter.Limits{})
 	factory := backends.Lookup(loc.Scheme)
 
-	be, err := factory.Create(ctx, cfg, rt, lim)
+	be, err := factory.Create(ctx, cfg, rt, lim, backendErrorLog)
 	if err != nil {
 		return nil, nil, restic.ID{}, fmt.Errorf("failed to create backend: %w", err)
 	}
@@ -1109,7 +1109,7 @@ func openRepository(ctx context.Context, opts options) (*repository.Repository, 
 	lim := limiter.NewStaticLimiter(limiter.Limits{})
 	factory := backends.Lookup(loc.Scheme)
 
-	be, err := factory.Open(ctx, cfg, rt, lim)
+	be, err := factory.Open(ctx, cfg, rt, lim, backendErrorLog)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to open backend: %w", err)
 	}
@@ -1125,6 +1125,10 @@ func openRepository(ctx context.Context, opts options) (*repository.Repository, 
 	}
 
 	return r, be, nil
+}
+
+func backendErrorLog(msg string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, msg, args...)
 }
 
 func collectBackends() *location.Registry {
