@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -21,5 +22,9 @@ func TestScript(t *testing.T) {
 		Dir:             "testdata",
 		ContinueOnError: true,
 		UpdateScripts:   updateScripts,
+		Setup: func(env *testscript.Env) error {
+			env.Setenv("RESTIC_CACHE_DIR", filepath.Join(env.WorkDir, ".restic-cache"))
+			return nil
+		},
 	})
 }
