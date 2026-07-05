@@ -1,0 +1,19 @@
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=localhost
+
+exec chmod +x fake-age
+
+exec restic init
+
+! exec restic-age-key add --age-program $WORK/fake-age --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+! stdout .
+stderr 'failed to encrypt key with age: exit status 1'
+
+-- password.txt --
+secret
+
+-- fake-age --
+#!/bin/sh
+exit 1

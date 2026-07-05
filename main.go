@@ -964,7 +964,7 @@ func ageEncryptRandomKey(ctx context.Context, ageProgram string, pubkey string) 
 		}
 
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
 			return "", nil, fmt.Errorf("%s", string(exitErr.Stderr))
 		}
 
@@ -985,7 +985,7 @@ func ageDecryptKey(ctx context.Context, ageProgram string, identityFile string, 
 		}
 
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
 			return "", fmt.Errorf("%s", string(exitErr.Stderr))
 		}
 
