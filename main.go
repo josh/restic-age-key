@@ -1029,7 +1029,7 @@ func readPassword(ctx context.Context, opts *options) (string, error) {
 		return opts.password, nil
 	} else if opts.passwordFile != "" {
 		s, err := textfile.Read(opts.passwordFile)
-		if errors.Is(err, os.ErrNotExist) {
+		if err != nil {
 			return "", fmt.Errorf("failed to read password file: %w", err)
 		}
 
