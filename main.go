@@ -733,7 +733,7 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 		return err
 	}
 
-	repoKeys := make(map[string]Recipient)
+	repoKeys := make(map[string][]Recipient)
 
 	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
 		data, err := repo.LoadRaw(ctx, restic.KeyFile, id)
@@ -753,12 +753,12 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 		}
 
 		if k.AgePubkey != "" {
-			repoKeys[k.AgePubkey] = Recipient{
+			repoKeys[k.AgePubkey] = append(repoKeys[k.AgePubkey], Recipient{
 				ID:     id,
 				Pubkey: k.AgePubkey,
 				Host:   k.Hostname,
 				User:   k.Username,
-			}
+			})
 		}
 
 		return nil
@@ -776,7 +776,7 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 		}
 	}
 
-	for pubkey, existingRecipient := range repoKeys {
+	for pubkey, existingRecipients := range repoKeys {
 		found := false
 		for _, recipient := range setRecipients {
 			if pubkey == recipient.Pubkey {
@@ -785,7 +785,7 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 			}
 		}
 		if !found {
-			keysToRemove = append(keysToRemove, existingRecipient)
+			keysToRemove = append(keysToRemove, existingRecipients...)
 		}
 	}
 
