@@ -451,6 +451,10 @@ func buildAndSaveAgeKey(ctx context.Context, ageProgram, recipient, host, user s
 }
 
 func runKeyAdd(ctx context.Context, opts options, args []string) error {
+	if opts.repo == "" {
+		return errors.New("Fatal: Please specify repository location (-r or --repository-file)") //nolint:staticcheck
+	}
+
 	repo, be, err := openRepositoryWithPassword(ctx, opts)
 	if err != nil {
 		return err
