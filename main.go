@@ -905,6 +905,7 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 	}
 
 	var password string
+	var keyErr error
 
 	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
 		if password != "" {
@@ -913,6 +914,10 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 
 		data, err := repo.LoadRaw(ctx, restic.KeyFile, id)
 		if err != nil {
+			if keyErr == nil {
+				keyErr = err
+			}
+
 			return nil
 		}
 
@@ -927,25 +932,35 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 			return nil
 		}
 
-		password, err = ageDecryptKey(ctx, opts.ageProgram, opts.identityFile, k.AgeData)
+		pw, err := ageDecryptKey(ctx, opts.ageProgram, opts.identityFile, k.AgeData)
 		if err != nil {
 			if strings.Contains(err.Error(), "no identity matched any of the recipients") {
 				return nil
 			}
 
-			return err
+			if keyErr == nil {
+				keyErr = err
+			}
+
+			return nil
 		}
+
+		password = pw
 
 		return nil
 	})
 
 	if password != "" {
 		return password, nil
-	} else if err != nil {
-		return "", err
-	} else {
-		return "", errors.New("no password found")
 	}
+	if keyErr != nil {
+		return "", keyErr
+	}
+	if err != nil {
+		return "", err
+	}
+
+	return "", errors.New("no password found")
 }
 
 func ageEncryptRandomKey(ctx context.Context, ageProgram string, pubkey string) (string, []byte, error) {
