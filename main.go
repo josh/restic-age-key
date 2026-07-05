@@ -756,7 +756,7 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 
 	setRecipients, err := readRecipientsFile(opts.recipientsFile)
 	if err != nil {
-		return errors.New("Fatal: Unable to read recipients file") //nolint:staticcheck
+		return fmt.Errorf("Fatal: Unable to read recipients file: %w", err) //nolint:staticcheck
 	}
 
 	repo, be, err := openRepositoryWithPassword(ctx, opts)
