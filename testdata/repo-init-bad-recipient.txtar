@@ -1,0 +1,7 @@
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=localhost
+
+! exec restic-age-key repo-init --repo $WORK/repo --recipient not-an-age-key
+! stdout .
+stderr 'invalid age recipient not-an-age-key'
+! exists $WORK/repo/config

@@ -534,6 +534,44 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 		return fmt.Errorf("failed to get chunker polynomial: %w", err)
 	}
 
+	var recipients []Recipient
+	if opts.recipientsFile != "" {
+		recipients, err = readRecipientsFile(opts.recipientsFile)
+		if err != nil {
+			return fmt.Errorf("failed to read recipients file: %w", err)
+		}
+
+		if len(recipients) == 0 {
+			return errors.New("Fatal: Recipients file contains no recipients") //nolint:staticcheck
+		}
+	}
+
+	preflight := recipients
+	if opts.recipientsFile == "" {
+		preflight = []Recipient{{Pubkey: opts.recipient}}
+	}
+	for _, recipient := range preflight {
+		host := recipient.Host
+		if host == "" {
+			host = opts.host
+		}
+		if host == "" {
+			return errors.New("hostname is empty")
+		}
+
+		user := recipient.User
+		if user == "" {
+			user = opts.user
+		}
+		if user == "" {
+			return errors.New("username is empty")
+		}
+
+		if _, _, err := ageEncryptRandomKey(ctx, opts.ageProgram, recipient.Pubkey); err != nil {
+			return fmt.Errorf("invalid age recipient %s: %w", recipient.Pubkey, err)
+		}
+	}
+
 	var tempPasswordBuf [32]byte
 	if _, err := rand.Read(tempPasswordBuf[:]); err != nil {
 		return fmt.Errorf("failed to generate temporary password: %w", err)
@@ -552,15 +590,6 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 	var ageKeyIDs []restic.ID
 
 	if opts.recipientsFile != "" {
-		recipients, err := readRecipientsFile(opts.recipientsFile)
-		if err != nil {
-			return fmt.Errorf("failed to read recipients file: %w", err)
-		}
-
-		if len(recipients) == 0 {
-			return errors.New("Fatal: Recipients file contains no recipients") //nolint:staticcheck
-		}
-
 		for _, recipient := range recipients {
 			host := recipient.Host
 			if host == "" {
@@ -607,7 +636,6 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 	fmt.Fprintln(os.Stderr, "repository version: 2")
 
 	if opts.recipientsFile != "" {
-		recipients, _ := readRecipientsFile(opts.recipientsFile)
 		for i, ageKeyID := range ageKeyIDs {
 			host := recipients[i].Host
 			if host == "" {
