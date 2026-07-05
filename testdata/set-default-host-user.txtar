@@ -1,0 +1,23 @@
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+env RESTIC_AGE_USER=default
+env RESTIC_AGE_HOST=default.local
+
+exec restic init
+
+exec restic-age-key set --recipients-file=recipients.json
+stderr 'Add key age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw for default@default.local'
+stderr 'Add key age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr for bob@bob.local'
+
+exec restic-age-key list
+stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw\s+default\s+default.local'
+stdout 'age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr\s+bob\s+bob.local'
+
+-- password.txt --
+secret
+
+-- recipients.json --
+[
+    { "pubkey": "age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw" },
+    { "host": "bob.local", "user": "bob", "pubkey": "age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr" }
+]
