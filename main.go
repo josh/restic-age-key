@@ -1177,6 +1177,9 @@ func openRepository(ctx context.Context, opts options) (*repository.Repository, 
 	if be.IsNotExist(err) {
 		return nil, nil, errors.New("repository does not exist: unable to open config file")
 	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to open config file: %w", err)
+	}
 
 	return r, be, nil
 }
