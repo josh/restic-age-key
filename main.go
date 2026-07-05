@@ -830,9 +830,13 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 	for _, recipient := range keysToAdd {
 		addOpts := opts
 		addOpts.recipient = recipient.Pubkey
-		addOpts.host = recipient.Host
-		addOpts.user = recipient.User
 		addOpts.dryRun = opts.dryRun
+		if recipient.Host != "" {
+			addOpts.host = recipient.Host
+		}
+		if recipient.User != "" {
+			addOpts.user = recipient.User
+		}
 
 		err := runKeyAdd(ctx, addOpts, args)
 		if err != nil {
