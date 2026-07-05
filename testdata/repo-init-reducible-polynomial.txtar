@@ -1,0 +1,10 @@
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=localhost
+
+! exec restic-age-key repo-init --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --chunker-polynomial 0x4 --identity-file $WORK/key.txt
+! stdout .
+stderr 'invalid chunker polynomial'
+! exists $WORK/repo/config
+
+-- key.txt --
+AGE-SECRET-KEY-1QFNZQKV0TAXNDEXVR3MCZPANFJ0PNYXPEVNSTXSRQ9GM3KTHS5QW3DNKH

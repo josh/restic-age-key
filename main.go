@@ -652,6 +652,9 @@ func parseChunkerPolynomial(hexStr string) (*chunker.Pol, error) {
 	}
 
 	pol := chunker.Pol(val)
+	if pol.Deg() != 53 || !pol.Irreducible() {
+		return nil, fmt.Errorf("invalid chunker polynomial: %s is not an irreducible polynomial of degree 53", hexStr)
+	}
 	return &pol, nil
 }
 
