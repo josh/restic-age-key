@@ -481,10 +481,14 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to write key id to file: %w", err)
 		}
-		defer func() { _ = file.Close() }()
 
 		_, err = file.WriteString(id.String()[0:8] + "\n")
 		if err != nil {
+			_ = file.Close()
+			return fmt.Errorf("failed to write key id to file: %w", err)
+		}
+
+		if err := file.Close(); err != nil {
 			return fmt.Errorf("failed to write key id to file: %w", err)
 		}
 	}
@@ -508,9 +512,12 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 			return fmt.Errorf("failed to write password to file: %w", err)
 		}
 
-		defer func() { _ = file.Close() }()
-
 		if _, err := file.WriteString(password + "\n"); err != nil {
+			_ = file.Close()
+			return fmt.Errorf("failed to write password to file: %w", err)
+		}
+
+		if err := file.Close(); err != nil {
 			return fmt.Errorf("failed to write password to file: %w", err)
 		}
 	} else {
@@ -660,13 +667,17 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to create output file: %w", err)
 		}
-		defer func() { _ = file.Close() }()
 
 		for _, ageKeyID := range ageKeyIDs {
 			_, err = file.WriteString(ageKeyID.Str()[0:8] + "\n")
 			if err != nil {
+				_ = file.Close()
 				return fmt.Errorf("failed to write to output file: %w", err)
 			}
+		}
+
+		if err := file.Close(); err != nil {
+			return fmt.Errorf("failed to write to output file: %w", err)
 		}
 	}
 
