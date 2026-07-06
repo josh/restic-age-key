@@ -4,7 +4,7 @@ go 1.25.8
 
 require (
 	github.com/josh/restic-api v0.19.0
-	github.com/restic/chunker v0.4.0
+	github.com/restic/chunker v0.5.0
 	github.com/rogpeppe/go-internal v1.15.0
 	github.com/spf13/cobra v1.10.2
 )
