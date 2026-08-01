@@ -1,0 +1,41 @@
+env RESTIC_REPOSITORY=$WORK/repo
+exec restic init --password-file $WORK/password.txt
+
+# A whitespace-only identity command passed as a flag returns an error, not a panic.
+! exec restic-age-key password --identity-command '   '
+! stdout .
+! stderr 'panic:'
+! stderr '^goroutine [0-9]+'
+cmp stderr identity-stderr.txt
+
+# A whitespace-only identity command from the environment behaves the same way.
+env RESTIC_AGE_IDENTITY_COMMAND='   '
+! exec restic-age-key password
+! stdout .
+! stderr 'panic:'
+! stderr '^goroutine [0-9]+'
+cmp stderr identity-stderr.txt
+env RESTIC_AGE_IDENTITY_COMMAND=
+
+# A whitespace-only password command passed as a flag returns an error, not a panic.
+! exec restic-age-key add --password-command '   '
+! stdout .
+! stderr 'panic:'
+! stderr '^goroutine [0-9]+'
+cmp stderr password-stderr.txt
+
+# A whitespace-only password command from the environment behaves the same way.
+env RESTIC_PASSWORD_COMMAND='   '
+! exec restic-age-key add
+! stdout .
+! stderr 'panic:'
+! stderr '^goroutine [0-9]+'
+cmp stderr password-stderr.txt
+
+-- password.txt --
+secret
+
+-- identity-stderr.txt --
+Resolving identity failed: identity command is empty
+-- password-stderr.txt --
+Fatal: Resolving password failed: password command is empty

@@ -1041,10 +1041,16 @@ func readIdentityCommand(ctx context.Context, opts *options) (func(), error) {
 
 		return noop, nil
 	}
+	if strings.TrimSpace(opts.identityCommand) == "" {
+		return noop, errors.New("identity command is empty")
+	}
 
 	args, err := backend.SplitShellStrings(opts.identityCommand)
 	if err != nil {
 		return noop, fmt.Errorf("failed to split shell string: %w", err)
+	}
+	if len(args) == 0 {
+		return noop, errors.New("identity command is empty")
 	}
 
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
@@ -1105,9 +1111,16 @@ func readPassword(ctx context.Context, opts *options) (string, error) {
 
 		return password, nil
 	} else if opts.passwordCommand != "" {
+		if strings.TrimSpace(opts.passwordCommand) == "" {
+			return "", errors.New("password command is empty")
+		}
+
 		args, err := backend.SplitShellStrings(opts.passwordCommand)
 		if err != nil {
 			return "", err
+		}
+		if len(args) == 0 {
+			return "", errors.New("password command is empty")
 		}
 
 		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
