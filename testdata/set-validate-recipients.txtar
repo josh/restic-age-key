@@ -1,0 +1,47 @@
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+
+exec restic init
+exec restic-age-key add --recipient=age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw --user=alice --host=alice.local
+
+exec restic-age-key set --recipients-file=duplicates.json
+! stdout .
+! stderr .
+
+! exec restic-age-key set --recipients-file=conflicting.json
+stderr 'Fatal: Invalid recipients file: conflicting entries for pubkey age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
+! stderr 'Add key|Remove key'
+
+! exec restic-age-key set --recipients-file=empty-pubkey.json
+stderr 'Fatal: Invalid recipients file: recipient pubkey is empty'
+! stderr 'Add key|Remove key'
+
+exec restic-age-key list
+stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw\s+alice\s+alice.local'
+
+exec bash restic-key-count.bash
+stdout 2
+! stderr .
+
+-- password.txt --
+secret
+
+-- duplicates.json --
+[
+    { "host": "alice.local", "user": "alice", "pubkey": "age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw" },
+    { "host": "alice.local", "user": "alice", "pubkey": "age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw" }
+]
+
+-- conflicting.json --
+[
+    { "host": "alice.local", "user": "alice", "pubkey": "age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw" },
+    { "host": "alice.local", "user": "bob", "pubkey": "age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw" }
+]
+
+-- empty-pubkey.json --
+[
+    { "host": "alice.local", "user": "alice", "pubkey": "" }
+]
+
+-- restic-key-count.bash --
+restic key list --no-cache --json | jq length

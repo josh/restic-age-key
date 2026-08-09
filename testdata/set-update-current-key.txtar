@@ -1,0 +1,81 @@
+env RESTIC_REPOSITORY=$WORK/repo
+
+exec restic-age-key repo-init --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt --user alice --host old.local --output old-keyid.txt
+stderr 'age key [a-f0-9]{8} for alice@old.local'
+
+exec restic-age-key password --identity-file $WORK/key.txt --output current-password.txt
+! stdout .
+! stderr .
+exec bash restic-current-keyid.bash current-password.txt old-keyid-full.txt
+! stdout .
+! stderr .
+exec bash restic-key-content.bash old-keyid-full.txt old-key-content.json
+! stdout .
+! stderr .
+exec restic-age-key list --identity-file $WORK/key.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7\s+alice\s+old.local'
+! stderr .
+
+exec bash corrupt-replacement.bash old-keyid-full.txt
+! stdout .
+! stderr .
+
+exec restic-age-key set --identity-file=$WORK/key.txt --recipients-file=recipients.json
+stderr 'Add key age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 for bob@new.local'
+stderr 'Remove key age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 for alice@old.local'
+! stderr 'refusing to remove key currently used'
+
+exec restic-age-key list --identity-file $WORK/key.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7\s+bob\s+new.local'
+! stdout 'alice\s+old.local'
+! stderr .
+
+exec restic-age-key list --password-file current-password.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7\s+bob\s+new.local'
+! stderr .
+
+exec bash restic-current-keyid.bash current-password.txt new-keyid-full.txt
+! stdout .
+! stderr .
+! cmp old-keyid-full.txt new-keyid-full.txt
+exec bash restic-key-content.bash new-keyid-full.txt new-key-content.json
+! stdout .
+! stderr .
+cmp old-key-content.json new-key-content.json
+
+exec bash restic-key-count.bash current-password.txt
+stdout 1
+! stderr .
+
+exec restic-age-key set --password-file=current-password.txt --recipients-file=recipients.json
+! stdout .
+! stderr .
+
+-- key.txt --
+AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY
+
+-- recipients.json --
+[
+    { "host": "new.local", "user": "bob", "pubkey": "age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7" }
+]
+
+-- corrupt-replacement.bash --
+set -euo pipefail
+old_key_id=$(tr -d '\n' < "$1")
+replacement=$(jq --compact-output --sort-keys '.hostname = "new.local" | .username = "bob"' "$RESTIC_REPOSITORY/keys/$old_key_id")
+printf '%s' "$replacement" > "$WORK/replacement-key.json"
+replacement_id=$(sha256sum "$WORK/replacement-key.json")
+replacement_id=${replacement_id%% *}
+printf 'corrupt' > "$RESTIC_REPOSITORY/keys/$replacement_id"
+
+-- restic-current-keyid.bash --
+set -euo pipefail
+restic key list --no-cache --password-file "$1" --json | jq --raw-output '.[] | select(.current) | .id' > "$2"
+
+-- restic-key-content.bash --
+set -euo pipefail
+key_id=$(tr -d '\n' < "$1")
+jq --sort-keys 'del(.hostname, .username)' "$RESTIC_REPOSITORY/keys/$key_id" > "$2"
+
+-- restic-key-count.bash --
+restic key list --no-cache --password-file "$1" --json | jq length

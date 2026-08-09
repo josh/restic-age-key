@@ -3,30 +3,56 @@ env RESTIC_REPOSITORY=$WORK/repo
 exec restic init --password-file=$WORK/password.txt
 
 exec restic-age-key add --password-file=$WORK/password.txt --recipient=age15xz8e5kyjguheag9a99nmwfrf5z3wr9729x2nhdk8zdfcny7a4wqtyl0rn
-exec restic-age-key add --password-file=$WORK/password.txt --recipient=age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9
-
-exec restic-age-key list --password-file=$WORK/password.txt
-stdout 'age15xz8e5kyjguheag9a99nmwfrf5z3wr9729x2nhdk8zdfcny7a4wqtyl0rn'
-stdout 'age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9'
+exec restic-age-key add --password-file=$WORK/password.txt --recipient=age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9 --user=carol --host=old.local
 
 ! exec restic-age-key set --identity-file=$WORK/key.txt --recipients-file=recipients.json
 cmp stderr set-stderr.txt
 
 exec restic-age-key list --password-file=$WORK/password.txt
 stdout 'age15xz8e5kyjguheag9a99nmwfrf5z3wr9729x2nhdk8zdfcny7a4wqtyl0rn'
-stdout 'age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9'
+! stdout 'age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9\s+carol\s+old.local'
+stdout 'age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9\s+alice\s+old.local'
+stdout 'age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4'
+
+exec bash restic-key-count.bash
+stdout 4
+
+exec restic-age-key set --identity-file=$WORK/key.txt --recipients-file=recipients.json
+! stderr 'Add key'
+stderr 'Remove key age15xz8e5kyjguheag9a99nmwfrf5z3wr9729x2nhdk8zdfcny7a4wqtyl0rn'
+! stderr 'Remove key age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9'
+! stderr 'refusing to remove key currently used'
+
+exec restic-age-key list --password-file=$WORK/password.txt
+! stdout 'age15xz8e5kyjguheag9a99nmwfrf5z3wr9729x2nhdk8zdfcny7a4wqtyl0rn'
+stdout 'age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9\s+alice\s+old.local'
+! stdout 'age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9\s+carol\s+old.local'
+stdout 'age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4'
+
+exec bash restic-key-count.bash
+stdout 3
 
 -- password.txt --
 secret
 
 -- key.txt --
 AGE-SECRET-KEY-1KEA8L9NDXW4GWW946TZ5LJVGYRGHL4JQ3ZVMX4HRAE3LWYTAU8GQAKTGZ9
+AGE-SECRET-KEY-1VYLVW0ECH8CVFEKQUSDCSWR6URU6ZWVFH245PHW5TSSE9V676DTSFHL5E7
 
 -- recipients.json --
 [
-    { "user": "alice", "pubkey": "age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9" }
+    { "user": "alice", "pubkey": "age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9" },
+    { "host": "bob.local", "user": "bob", "pubkey": "age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4" }
 ]
 
+-- restic-key-count.bash --
+restic key list --password-file=$WORK/password.txt --no-cache --json | jq length
+
 -- set-stderr.txt --
+Add key age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9 for alice@old.local
+Add key age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4 for bob@bob.local
 Error: refusing to remove key currently used to access repository
+Additions were staged. The current key was retained.
+Re-run set using a retained recipient's identity to verify access before removing it.
+Remove key age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9 for carol@old.local
 failed to set keys
