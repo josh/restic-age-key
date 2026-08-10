@@ -1,14 +1,23 @@
 env RESTIC_AGE_USER=alice
 env RESTIC_AGE_HOST=alice.local
 
-! exec restic-age-key --age-program flaky-age repo-init --if-not-exists --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt
-stderr 'failed to create age key'
-! stderr 'created restic repository'
+exec restic-age-key --age-program flaky-age repo-init --if-not-exists --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt
+stderr 'created restic repository'
+! stderr 'failed to create age key'
 exists $WORK/repo/config
 
-! exec restic-age-key --age-program flaky-age repo-init --if-not-exists --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt
+exec restic-age-key password --repo $WORK/repo --identity-file $WORK/key.txt
+stdout '^[a-f0-9]{64}\n$'
+
+exec restic init --repo $WORK/partial --password-file $WORK/password.txt
+
+! exec restic-age-key repo-init --if-not-exists --repo $WORK/partial --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt
 stderr 'repository is incompletely initialized: no age-encrypted keys found'
 ! stderr 'repository already initialized'
+! stderr 'created restic repository'
 
 -- key.txt --
 AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY
+
+-- password.txt --
+secret
