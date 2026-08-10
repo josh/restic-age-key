@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -173,7 +174,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	setCommand := &cobra.Command{
 		Use:   "set",
 		Short: "Set keys in the repository based on a recipients file",
-		Long:  "Set command adds any pubkeys from the recipients file that aren't in the repo, ignores existing pubkeys, and removes keys from the repo that aren't present in the recipients file",
+		Long:  "Set command adds missing pubkeys, updates user and host metadata for existing pubkeys, and removes keys that aren't present in the recipients file",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if options.timeout > 0 {
 				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
@@ -302,7 +303,7 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 		return errors.New("Fatal: Please specify repository location (-r or --repository-file)") //nolint:staticcheck
 	}
 
-	repo, _, err := openRepositoryWithPassword(ctx, opts)
+	repo, _, _, err := openRepositoryWithPassword(ctx, opts)
 	if err != nil {
 		return err
 	}
@@ -376,10 +377,16 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 	return nil
 }
 
-func buildAndSaveAgeKey(ctx context.Context, ageProgram, recipient, host, user string, repo *repository.Repository, be backend.Backend, dryRun bool) (restic.ID, error) {
+type preparedAgeKey struct {
+	id       restic.ID
+	raw      []byte
+	password string
+}
+
+func prepareAgeKey(ctx context.Context, ageProgram, recipient, host, user string, master crypto.Key) (preparedAgeKey, error) {
 	params, err := crypto.Calibrate(500*time.Millisecond, 60)
 	if err != nil {
-		return restic.ID{}, fmt.Errorf("failed to calibrate crypto parameters: %w", err)
+		return preparedAgeKey{}, fmt.Errorf("failed to calibrate crypto parameters: %w", err)
 	}
 
 	newkey := &AgeKey{
@@ -392,22 +399,22 @@ func buildAndSaveAgeKey(ctx context.Context, ageProgram, recipient, host, user s
 
 	newkey.Hostname = host
 	if newkey.Hostname == "" {
-		return restic.ID{}, errors.New("hostname is empty")
+		return preparedAgeKey{}, errors.New("hostname is empty")
 	}
 
 	newkey.Username = user
 	if newkey.Username == "" {
-		return restic.ID{}, errors.New("username is empty")
+		return preparedAgeKey{}, errors.New("username is empty")
 	}
 
 	newkey.Salt, err = crypto.NewSalt()
 	if err != nil {
-		return restic.ID{}, fmt.Errorf("failed to generate new salt: %w", err)
+		return preparedAgeKey{}, fmt.Errorf("failed to generate new salt: %w", err)
 	}
 
 	password, ageData, err := ageEncryptRandomKey(ctx, ageProgram, recipient)
 	if err != nil {
-		return restic.ID{}, err
+		return preparedAgeKey{}, err
 	}
 
 	newkey.AgePubkey = recipient
@@ -415,16 +422,12 @@ func buildAndSaveAgeKey(ctx context.Context, ageProgram, recipient, host, user s
 
 	userKey, err := crypto.KDF(params, newkey.Salt, password)
 	if err != nil {
-		return restic.ID{}, fmt.Errorf("failed to generate key from password: %w", err)
+		return preparedAgeKey{}, fmt.Errorf("failed to generate key from password: %w", err)
 	}
 
-	if repo.Key() == nil {
-		return restic.ID{}, errors.New("repo master key not loaded")
-	}
-
-	buf, err := json.Marshal(repo.Key())
+	buf, err := json.Marshal(&master)
 	if err != nil {
-		return restic.ID{}, fmt.Errorf("failed to marshal repository key: %w", err)
+		return preparedAgeKey{}, fmt.Errorf("failed to marshal repository key: %w", err)
 	}
 
 	nonce := crypto.NewRandomNonce()
@@ -435,19 +438,66 @@ func buildAndSaveAgeKey(ctx context.Context, ageProgram, recipient, host, user s
 
 	buf, err = json.Marshal(newkey)
 	if err != nil {
-		return restic.ID{}, fmt.Errorf("failed to marshal new key: %w", err)
+		return preparedAgeKey{}, fmt.Errorf("failed to marshal new key: %w", err)
 	}
 
-	id := restic.Hash(buf)
-	h := backend.Handle{Type: restic.KeyFile, Name: id.String()}
-	if !dryRun {
-		err = be.Save(ctx, h, backend.NewByteReader(buf, be.Hasher()))
-		if err != nil {
-			return restic.ID{}, fmt.Errorf("failed to save key to backend: %w", err)
+	return preparedAgeKey{
+		id:       restic.Hash(buf),
+		raw:      buf,
+		password: password,
+	}, nil
+}
+
+func savePreparedAgeKey(ctx context.Context, repo *repository.Repository, be backend.Backend, key preparedAgeKey, adoptExisting, dryRun bool) (bool, error) {
+	if dryRun {
+		return false, nil
+	}
+
+	if adoptExisting {
+		saved, err := repo.LoadRaw(ctx, restic.KeyFile, key.id)
+		switch {
+		case err == nil:
+			if !bytes.Equal(saved, key.raw) {
+				return false, errors.New("existing key differs from expected content")
+			}
+			return false, nil
+		case errors.Is(err, restic.ErrInvalidData):
+			if err := repository.RemoveKey(ctx, repo, key.id); err != nil && !be.IsNotExist(err) {
+				return false, fmt.Errorf("failed to remove corrupt key: %w", err)
+			}
+		case be.IsNotExist(err):
+		default:
+			return false, fmt.Errorf("failed to check key before saving: %w", err)
 		}
 	}
 
-	return id, nil
+	h := backend.Handle{Type: restic.KeyFile, Name: key.id.String()}
+	if err := be.Save(ctx, h, backend.NewByteReader(key.raw, be.Hasher())); err != nil {
+		cleanupErr := cleanupUnverifiedKey(ctx, repo, be, key.id)
+		if cleanupErr != nil {
+			return false, fmt.Errorf("failed to save key to backend: %v; failed to remove it: %w", err, cleanupErr)
+		}
+		return false, fmt.Errorf("failed to save key to backend: %w", err)
+	}
+
+	return true, nil
+}
+
+func buildAndSaveAgeKey(ctx context.Context, ageProgram, recipient, host, user string, repo *repository.Repository, be backend.Backend, dryRun bool) (restic.ID, string, error) {
+	if repo.Key() == nil {
+		return restic.ID{}, "", errors.New("repo master key not loaded")
+	}
+
+	key, err := prepareAgeKey(ctx, ageProgram, recipient, host, user, *repo.Key())
+	if err != nil {
+		return restic.ID{}, "", err
+	}
+
+	if _, err := savePreparedAgeKey(ctx, repo, be, key, false, dryRun); err != nil {
+		return restic.ID{}, "", err
+	}
+
+	return key.id, key.password, nil
 }
 
 func runKeyAdd(ctx context.Context, opts options, args []string) error {
@@ -455,7 +505,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		return errors.New("Fatal: Please specify repository location (-r or --repository-file)") //nolint:staticcheck
 	}
 
-	repo, be, err := openRepositoryWithPassword(ctx, opts)
+	repo, be, currentPassword, err := openRepositoryWithPassword(ctx, opts)
 	if err != nil {
 		return err
 	}
@@ -463,11 +513,34 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	if opts.recipient == "" {
 		return errors.New("Fatal: Please specify recipient (-r or --recipient)") //nolint:staticcheck
 	}
+	if repo.Key() == nil {
+		return errors.New("repo master key not loaded")
+	}
 
-	id, err := buildAndSaveAgeKey(ctx, opts.ageProgram, opts.recipient, opts.host, opts.user, repo, be, opts.dryRun)
+	expectedMaster := *repo.Key()
+	originalKeyID := repo.KeyID()
+	key, err := prepareAgeKey(ctx, opts.ageProgram, opts.recipient, opts.host, opts.user, expectedMaster)
 	if err != nil {
 		return err
 	}
+
+	if !opts.dryRun {
+		unlocker, lockedCtx, err := repository.Lock(ctx, repo, false, 0, func(string) {}, backendErrorLog)
+		if err != nil {
+			return fmt.Errorf("failed to lock repository: %w", err)
+		}
+		defer unlocker.Unlock()
+		ctx = lockedCtx
+
+		if _, err := verifyKeyAccess(ctx, be, originalKeyID, currentPassword, expectedMaster); err != nil {
+			return fmt.Errorf("failed to verify repository key after acquiring lock: %w", err)
+		}
+	}
+
+	if _, err := savePreparedAgeKey(ctx, repo, be, key, false, opts.dryRun); err != nil {
+		return err
+	}
+	id := key.id
 
 	if opts.dryRun {
 		fmt.Fprintf(os.Stderr, "[DRY RUN] Add key %s for %s@%s\n", opts.recipient, opts.user, opts.host)
@@ -611,14 +684,14 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 				user = opts.user
 			}
 
-			ageKeyID, err := buildAndSaveAgeKey(ctx, opts.ageProgram, recipient.Pubkey, host, user, repo, be, false)
+			ageKeyID, _, err := buildAndSaveAgeKey(ctx, opts.ageProgram, recipient.Pubkey, host, user, repo, be, false)
 			if err != nil {
 				return fmt.Errorf("failed to create age key for %s: %w", recipient.Pubkey, err)
 			}
 			ageKeyIDs = append(ageKeyIDs, ageKeyID)
 		}
 	} else {
-		ageKeyID, err := buildAndSaveAgeKey(ctx, opts.ageProgram, opts.recipient, opts.host, opts.user, repo, be, false)
+		ageKeyID, _, err := buildAndSaveAgeKey(ctx, opts.ageProgram, opts.recipient, opts.host, opts.user, repo, be, false)
 		if err != nil {
 			return fmt.Errorf("failed to create age key: %w", err)
 		}
@@ -760,6 +833,257 @@ func initializeRepository(ctx context.Context, opts options, password string, po
 	return repo, be, id, nil
 }
 
+type storedRecipient struct {
+	Recipient
+	raw []byte
+}
+
+type setKeySpec struct {
+	pubkey string
+	host   string
+	user   string
+}
+
+type setKeyCreation struct {
+	recipient       Recipient
+	existing        storedRecipient
+	prepared        preparedAgeKey
+	updatesExisting bool
+}
+
+type setKeyInventory struct {
+	recipients map[string][]storedRecipient
+	invalid    map[restic.ID]error
+}
+
+func prepareSetRecipients(recipients []Recipient) ([]Recipient, map[string]Recipient, error) {
+	unique := make([]Recipient, 0, len(recipients))
+	byPubkey := make(map[string]Recipient, len(recipients))
+
+	for _, recipient := range recipients {
+		if recipient.Pubkey == "" {
+			return nil, nil, errors.New("recipient pubkey is empty")
+		}
+
+		existing, ok := byPubkey[recipient.Pubkey]
+		if !ok {
+			byPubkey[recipient.Pubkey] = recipient
+			unique = append(unique, recipient)
+			continue
+		}
+
+		if existing.Host != recipient.Host || existing.User != recipient.User {
+			return nil, nil, fmt.Errorf("conflicting entries for pubkey %s", recipient.Pubkey)
+		}
+	}
+
+	return unique, byPubkey, nil
+}
+
+func rewriteAgeKeyMetadata(data []byte, host, user string) ([]byte, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, fmt.Errorf("failed to parse age key: %w", err)
+	}
+	if fields == nil {
+		return nil, errors.New("failed to parse age key: expected JSON object")
+	}
+
+	hostname, err := json.Marshal(host)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal hostname: %w", err)
+	}
+	username, err := json.Marshal(user)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal username: %w", err)
+	}
+
+	fields["hostname"] = hostname
+	fields["username"] = username
+
+	updated, err := json.Marshal(fields)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal updated age key: %w", err)
+	}
+
+	return updated, nil
+}
+
+func saveUpdatedAgeKey(ctx context.Context, repo *repository.Repository, be backend.Backend, existing storedRecipient, recipient Recipient, dryRun bool) (restic.ID, bool, error) {
+	data, err := rewriteAgeKeyMetadata(existing.raw, recipient.Host, recipient.User)
+	if err != nil {
+		return restic.ID{}, false, err
+	}
+
+	key := preparedAgeKey{id: restic.Hash(data), raw: data}
+	saved, err := savePreparedAgeKey(ctx, repo, be, key, true, dryRun)
+	return key.id, saved, err
+}
+
+func verifyKeyAccess(ctx context.Context, be backend.Backend, id restic.ID, password string, expectedMaster crypto.Key) (*repository.Repository, error) {
+	probe, err := repository.New(be, repository.Options{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize verification repository: %w", err)
+	}
+
+	if err := probe.SearchKey(ctx, password, 1, id.String()); err != nil {
+		return nil, fmt.Errorf("failed to open key: %w", err)
+	}
+	if probe.KeyID() != id {
+		return nil, fmt.Errorf("opened key %s instead of expected key %s", probe.KeyID().String(), id.String())
+	}
+	if probe.Key() == nil || *probe.Key() != expectedMaster {
+		return nil, errors.New("key decrypts to a different repository master key")
+	}
+
+	return probe, nil
+}
+
+func cleanupUnverifiedKey(ctx context.Context, repo *repository.Repository, be backend.Backend, id restic.ID) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+
+	if err := repository.RemoveKey(cleanupCtx, repo, id); err != nil && !be.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func recipientKeySpec(recipient Recipient) setKeySpec {
+	return setKeySpec{
+		pubkey: recipient.Pubkey,
+		host:   recipient.Host,
+		user:   recipient.User,
+	}
+}
+
+func resolveNewSetRecipient(recipient Recipient, opts options) (Recipient, error) {
+	if recipient.Host == "" {
+		recipient.Host = opts.host
+	}
+	if recipient.User == "" {
+		recipient.User = opts.user
+	}
+	if recipient.Host == "" {
+		return Recipient{}, errors.New("hostname is empty")
+	}
+	if recipient.User == "" {
+		return Recipient{}, errors.New("username is empty")
+	}
+	return recipient, nil
+}
+
+func resolveUpdatedSetRecipient(desired Recipient, existing storedRecipient) (Recipient, bool, error) {
+	if desired.Host == "" {
+		desired.Host = existing.Host
+	}
+	if desired.User == "" {
+		desired.User = existing.User
+	}
+	if desired.Host == existing.Host && desired.User == existing.User {
+		return desired, false, nil
+	}
+	if desired.Host == "" {
+		return Recipient{}, false, errors.New("hostname is empty")
+	}
+	if desired.User == "" {
+		return Recipient{}, false, errors.New("username is empty")
+	}
+	return desired, true, nil
+}
+
+func inspectSetKeys(ctx context.Context, repo *repository.Repository) (setKeyInventory, error) {
+	inventory := setKeyInventory{
+		recipients: make(map[string][]storedRecipient),
+		invalid:    make(map[restic.ID]error),
+	}
+
+	err := repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
+		data, err := repo.LoadRaw(ctx, restic.KeyFile, id)
+		if err != nil {
+			if errors.Is(err, restic.ErrInvalidData) {
+				inventory.invalid[id] = err
+				return nil
+			}
+			return fmt.Errorf("failed to load key %s: %w", id.Str(), err)
+		}
+
+		var key AgeKey
+		if err := json.Unmarshal(data, &key); err != nil {
+			return fmt.Errorf("failed to parse key %s: %w", id.Str(), err)
+		}
+		if key.AgePubkey != "" {
+			inventory.recipients[key.AgePubkey] = append(inventory.recipients[key.AgePubkey], storedRecipient{
+				Recipient: Recipient{
+					ID:     id,
+					Pubkey: key.AgePubkey,
+					Host:   key.Hostname,
+					User:   key.Username,
+				},
+				raw: data,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return setKeyInventory{}, err
+	}
+
+	for pubkey := range inventory.recipients {
+		sort.Slice(inventory.recipients[pubkey], func(i, j int) bool {
+			return inventory.recipients[pubkey][i].ID.String() < inventory.recipients[pubkey][j].ID.String()
+		})
+	}
+	return inventory, nil
+}
+
+func validateSetInventory(inventory setKeyInventory, recipients []Recipient, opts options, prepared map[setKeySpec]preparedAgeKey) error {
+	repairIDs := make(map[restic.ID]struct{})
+
+	for _, desired := range recipients {
+		existingRecipients := inventory.recipients[desired.Pubkey]
+		if len(existingRecipients) == 0 {
+			recipient, err := resolveNewSetRecipient(desired, opts)
+			if err != nil {
+				return err
+			}
+			if key, ok := prepared[recipientKeySpec(recipient)]; ok {
+				repairIDs[key.id] = struct{}{}
+			}
+			continue
+		}
+
+		for _, existing := range existingRecipients {
+			recipient, changed, err := resolveUpdatedSetRecipient(desired, existing)
+			if err != nil {
+				return err
+			}
+			if !changed {
+				continue
+			}
+			data, err := rewriteAgeKeyMetadata(existing.raw, recipient.Host, recipient.User)
+			if err != nil {
+				return err
+			}
+			repairIDs[restic.Hash(data)] = struct{}{}
+		}
+	}
+
+	invalidIDs := make([]restic.ID, 0, len(inventory.invalid))
+	for id := range inventory.invalid {
+		invalidIDs = append(invalidIDs, id)
+	}
+	sort.Slice(invalidIDs, func(i, j int) bool {
+		return invalidIDs[i].String() < invalidIDs[j].String()
+	})
+	for _, id := range invalidIDs {
+		if _, repairable := repairIDs[id]; !repairable {
+			return fmt.Errorf("failed to inspect key %s: %w", id.Str(), inventory.invalid[id])
+		}
+	}
+	return nil
+}
+
 func runKeySet(ctx context.Context, opts options, args []string) error {
 	if opts.repo == "" {
 		return errors.New("Fatal: Please specify repository location (-r or --repository-file)") //nolint:staticcheck
@@ -774,102 +1098,266 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 		return fmt.Errorf("Fatal: Unable to read recipients file: %w", err) //nolint:staticcheck
 	}
 
-	repo, be, err := openRepositoryWithPassword(ctx, opts)
+	setRecipients, desiredByPubkey, err := prepareSetRecipients(setRecipients)
+	if err != nil {
+		return fmt.Errorf("Fatal: Invalid recipients file: %w", err) //nolint:staticcheck
+	}
+
+	repo, be, currentPassword, err := openRepositoryWithPasswordPreferring(ctx, opts, desiredByPubkey)
 	if err != nil {
 		return err
 	}
-
-	repoKeys := make(map[string][]Recipient)
-
-	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
-		data, err := repo.LoadRaw(ctx, restic.KeyFile, id)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "LoadKey() failed: %v\n", err)
-
-			return nil
-		}
-
-		k := &AgeKey{}
-
-		err = json.Unmarshal(data, k)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "LoadKey() failed: %v\n", err)
-
-			return nil
-		}
-
-		if k.AgePubkey != "" {
-			repoKeys[k.AgePubkey] = append(repoKeys[k.AgePubkey], Recipient{
-				ID:     id,
-				Pubkey: k.AgePubkey,
-				Host:   k.Hostname,
-				User:   k.Username,
-			})
-		}
-
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("failed to list repository files: %w", err)
+	if repo.Key() == nil {
+		return errors.New("repo master key not loaded")
 	}
 
-	var keysToAdd []Recipient
-	var keysToRemove []Recipient
+	expectedMaster := *repo.Key()
+	originalKeyID := repo.KeyID()
+	prepared := make(map[setKeySpec]preparedAgeKey)
+	var inventory setKeyInventory
+	var operationCtx = ctx
+	var unlocker *repository.Unlocker
 
-	for _, recipient := range setRecipients {
-		if _, exists := repoKeys[recipient.Pubkey]; !exists {
-			keysToAdd = append(keysToAdd, recipient)
+	const maxPlanAttempts = 3
+	for attempt := 0; ; attempt++ {
+		snapshot, err := inspectSetKeys(ctx, repo)
+		if err != nil {
+			return fmt.Errorf("failed to inspect repository keys: %w", err)
 		}
-	}
 
-	for pubkey, existingRecipients := range repoKeys {
-		found := false
-		for _, recipient := range setRecipients {
-			if pubkey == recipient.Pubkey {
-				found = true
+		for _, desired := range setRecipients {
+			if len(snapshot.recipients[desired.Pubkey]) != 0 {
+				continue
+			}
+
+			recipient, err := resolveNewSetRecipient(desired, opts)
+			if err != nil {
+				return err
+			}
+			spec := recipientKeySpec(recipient)
+			if _, ok := prepared[spec]; ok {
+				continue
+			}
+
+			key, err := prepareAgeKey(ctx, opts.ageProgram, recipient.Pubkey, recipient.Host, recipient.User, expectedMaster)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to add key %s: %v\n", recipient.Pubkey, err)
+				return errors.New("failed to set keys")
+			}
+			prepared[spec] = key
+		}
+
+		if err := validateSetInventory(snapshot, setRecipients, opts, prepared); err != nil {
+			return fmt.Errorf("failed to inspect repository keys: %w", err)
+		}
+
+		if opts.dryRun {
+			inventory = snapshot
+			break
+		}
+
+		locked, lockedCtx, err := repository.Lock(ctx, repo, true, 0, func(string) {}, backendErrorLog)
+		if err != nil {
+			return fmt.Errorf("failed to lock repository: %w", err)
+		}
+
+		if _, err := verifyKeyAccess(lockedCtx, be, originalKeyID, currentPassword, expectedMaster); err != nil {
+			locked.Unlock()
+			return fmt.Errorf("failed to verify repository key after acquiring lock: %w", err)
+		}
+
+		lockedInventory, err := inspectSetKeys(lockedCtx, repo)
+		if err != nil {
+			locked.Unlock()
+			return fmt.Errorf("failed to inspect repository keys: %w", err)
+		}
+
+		needsPreparation := false
+		for _, desired := range setRecipients {
+			if len(lockedInventory.recipients[desired.Pubkey]) != 0 {
+				continue
+			}
+			recipient, err := resolveNewSetRecipient(desired, opts)
+			if err != nil {
+				locked.Unlock()
+				return err
+			}
+			if _, ok := prepared[recipientKeySpec(recipient)]; !ok {
+				needsPreparation = true
 				break
 			}
 		}
-		if !found {
-			keysToRemove = append(keysToRemove, existingRecipients...)
+
+		if needsPreparation {
+			locked.Unlock()
+			if attempt+1 >= maxPlanAttempts {
+				return errors.New("repository keys changed while preparing set; retry command")
+			}
+			continue
+		}
+		if err := validateSetInventory(lockedInventory, setRecipients, opts, prepared); err != nil {
+			locked.Unlock()
+			return fmt.Errorf("failed to inspect repository keys: %w", err)
+		}
+
+		inventory = lockedInventory
+		operationCtx = lockedCtx
+		unlocker = locked
+		break
+	}
+
+	if unlocker != nil {
+		defer unlocker.Unlock()
+	}
+	ctx = operationCtx
+	repoKeys := inventory.recipients
+
+	var keysToCreate []setKeyCreation
+	var keysToRemove []Recipient
+
+	for _, desired := range setRecipients {
+		existingRecipients := repoKeys[desired.Pubkey]
+		if len(existingRecipients) == 0 {
+			recipient, err := resolveNewSetRecipient(desired, opts)
+			if err != nil {
+				return err
+			}
+			key, ok := prepared[recipientKeySpec(recipient)]
+			if !ok {
+				return errors.New("repository keys changed while preparing set; retry command")
+			}
+			keysToCreate = append(keysToCreate, setKeyCreation{
+				recipient: recipient,
+				prepared:  key,
+			})
+			continue
+		}
+
+		for _, existing := range existingRecipients {
+			recipient, changed, err := resolveUpdatedSetRecipient(desired, existing)
+			if err != nil {
+				return err
+			}
+			if !changed {
+				continue
+			}
+
+			keysToCreate = append(keysToCreate, setKeyCreation{
+				recipient:       recipient,
+				existing:        existing,
+				updatesExisting: true,
+			})
+			keysToRemove = append(keysToRemove, existing.Recipient)
 		}
 	}
+
+	var stalePubkeys []string
+	for pubkey := range repoKeys {
+		if _, desired := desiredByPubkey[pubkey]; !desired {
+			stalePubkeys = append(stalePubkeys, pubkey)
+		}
+	}
+	sort.Strings(stalePubkeys)
+	for _, pubkey := range stalePubkeys {
+		for _, existing := range repoKeys[pubkey] {
+			keysToRemove = append(keysToRemove, existing.Recipient)
+		}
+	}
+
+	removesCurrentKey := false
+	hasPlannedReplacement := false
+	for _, recipient := range keysToRemove {
+		if recipient.ID == originalKeyID {
+			removesCurrentKey = true
+			break
+		}
+	}
+	for _, creation := range keysToCreate {
+		if creation.updatesExisting && creation.existing.ID == originalKeyID {
+			hasPlannedReplacement = true
+			break
+		}
+	}
+	cannotRemoveCurrent := removesCurrentKey && !hasPlannedReplacement
 
 	logPrefix := ""
 	if opts.dryRun {
 		logPrefix = "[DRY RUN] "
 	}
 
-	hasError := false
+	var replacementRepo *repository.Repository
 
-	for _, recipient := range keysToAdd {
-		addOpts := opts
-		addOpts.recipient = recipient.Pubkey
-		addOpts.dryRun = opts.dryRun
-		if recipient.Host != "" {
-			addOpts.host = recipient.Host
-		}
-		if recipient.User != "" {
-			addOpts.user = recipient.User
-		}
+	for _, creation := range keysToCreate {
+		var id restic.ID
+		var password string
+		var created bool
 
-		err := runKeyAdd(ctx, addOpts, args)
+		if creation.updatesExisting {
+			id, created, err = saveUpdatedAgeKey(ctx, repo, be, creation.existing, creation.recipient, opts.dryRun)
+			if err == nil && creation.existing.ID == originalKeyID {
+				password = currentPassword
+			}
+		} else {
+			id = creation.prepared.id
+			password = creation.prepared.password
+			created, err = savePreparedAgeKey(ctx, repo, be, creation.prepared, true, opts.dryRun)
+		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to add key %s: %v\n", recipient.Pubkey, err)
-			hasError = true
+			fmt.Fprintf(os.Stderr, "failed to add key %s: %v\n", creation.recipient.Pubkey, err)
+			return errors.New("failed to set keys")
+		}
+
+		var verifiedRepo *repository.Repository
+		if !opts.dryRun && password != "" {
+			verifiedRepo, err = verifyKeyAccess(ctx, be, id, password, expectedMaster)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to verify key %s: %v\n", creation.recipient.Pubkey, err)
+				if created {
+					if cleanupErr := cleanupUnverifiedKey(ctx, repo, be, id); cleanupErr != nil {
+						fmt.Fprintf(os.Stderr, "failed to remove unverified key %s: %v\n", id.Str(), cleanupErr)
+					}
+				}
+				return errors.New("failed to set keys")
+			}
+		}
+
+		fmt.Fprintf(os.Stderr, "%sAdd key %s for %s@%s\n", logPrefix, creation.recipient.Pubkey, creation.recipient.User, creation.recipient.Host)
+
+		if verifiedRepo != nil && creation.updatesExisting && creation.existing.ID == originalKeyID {
+			replacementRepo = verifiedRepo
 		}
 	}
 
+	hasError := false
+	repoForRemoval := repo
+	blockedKeyID := restic.ID{}
+
+	if cannotRemoveCurrent {
+		fmt.Fprintln(os.Stderr, "Error: refusing to remove key currently used to access repository")
+		if !opts.dryRun && len(keysToCreate) > 0 {
+			fmt.Fprintln(os.Stderr, "Additions were staged. The current key was retained.")
+		}
+		fmt.Fprintln(os.Stderr, "Re-run set using a retained recipient's identity to verify access before removing it.")
+		hasError = true
+		blockedKeyID = originalKeyID
+	} else if removesCurrentKey && !opts.dryRun {
+		if replacementRepo == nil {
+			fmt.Fprintln(os.Stderr, "Error: refusing to remove key currently used to access repository")
+			return errors.New("failed to set keys")
+		}
+		repoForRemoval = replacementRepo
+		blockedKeyID = replacementRepo.KeyID()
+	} else if !opts.dryRun {
+		blockedKeyID = repo.KeyID()
+	}
+
 	for _, recipient := range keysToRemove {
-		if recipient.ID == repo.KeyID() {
-			fmt.Fprintf(os.Stderr, "Error: refusing to remove key currently used to access repository\n")
+		if recipient.ID == blockedKeyID {
+			if !cannotRemoveCurrent {
+				fmt.Fprintln(os.Stderr, "Error: refusing to remove key currently used to access repository")
+			}
 			hasError = true
 			continue
-		}
-
-		h := backend.Handle{
-			Type: restic.KeyFile,
-			Name: recipient.ID.String(),
 		}
 
 		fmt.Fprintf(os.Stderr, "%sRemove key %s for %s@%s\n", logPrefix, recipient.Pubkey, recipient.User, recipient.Host)
@@ -878,8 +1366,7 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 			continue
 		}
 
-		err := be.Remove(ctx, h)
-		if err != nil {
+		if err := repository.RemoveKey(ctx, repoForRemoval, recipient.ID); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to remove key %s: %v\n", recipient.Pubkey, err)
 			hasError = true
 		}
@@ -891,7 +1378,6 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 
 	return nil
 }
-
 func readRecipientsFile(path string) ([]Recipient, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -907,81 +1393,92 @@ func readRecipientsFile(path string) ([]Recipient, error) {
 	return recipients, nil
 }
 
-func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) {
-	repo, _, err := openRepository(ctx, opts)
-	if err != nil {
-		return "", err
-	}
+type identityKeyCandidate struct {
+	id      restic.ID
+	pubkey  string
+	ageData []byte
+}
 
+func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Repository, opts options, preferredPubkeys map[string]Recipient) (string, restic.ID, error) {
 	closeIdentityCommand, err := readIdentityCommand(ctx, &opts)
 	if err != nil {
-		return "", fmt.Errorf("Resolving identity failed: %w", err) //nolint:staticcheck
+		return "", restic.ID{}, fmt.Errorf("Resolving identity failed: %w", err) //nolint:staticcheck
 	}
 	defer closeIdentityCommand()
 
 	if opts.identityFile == "" {
-		return "", errors.New("no identity file specified")
+		return "", restic.ID{}, errors.New("no identity file specified")
 	}
 
-	var password string
+	var candidates []identityKeyCandidate
 	var keyErr error
 
-	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
-		if password != "" {
-			return nil
-		}
-
+	listErr := repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
 		data, err := repo.LoadRaw(ctx, restic.KeyFile, id)
 		if err != nil {
 			if keyErr == nil {
 				keyErr = err
 			}
-
 			return nil
 		}
 
-		k := &AgeKey{}
-
-		err = json.Unmarshal(data, k)
-		if err != nil {
+		var key AgeKey
+		if err := json.Unmarshal(data, &key); err != nil || key.AgePubkey == "" {
 			return nil
 		}
 
-		if k.AgePubkey == "" {
-			return nil
-		}
-
-		pw, err := ageDecryptKey(ctx, opts.ageProgram, opts.identityFile, k.AgeData)
-		if err != nil {
-			if strings.Contains(err.Error(), "no identity matched any of the recipients") {
-				return nil
-			}
-
-			if keyErr == nil {
-				keyErr = err
-			}
-
-			return nil
-		}
-
-		password = pw
-
+		candidates = append(candidates, identityKeyCandidate{
+			id:      id,
+			pubkey:  key.AgePubkey,
+			ageData: key.AgeData,
+		})
 		return nil
 	})
+	if listErr != nil {
+		return "", restic.ID{}, listErr
+	}
 
-	if password != "" {
-		return password, nil
+	sort.Slice(candidates, func(i, j int) bool {
+		_, iPreferred := preferredPubkeys[candidates[i].pubkey]
+		_, jPreferred := preferredPubkeys[candidates[j].pubkey]
+		if iPreferred != jPreferred {
+			return iPreferred
+		}
+		return candidates[i].id.String() < candidates[j].id.String()
+	})
+
+	for _, candidate := range candidates {
+		password, err := ageDecryptKey(ctx, opts.ageProgram, opts.identityFile, candidate.ageData)
+		if err == nil {
+			return password, candidate.id, nil
+		}
+		if strings.Contains(err.Error(), "no identity matched any of the recipients") {
+			continue
+		}
+		if keyErr == nil {
+			keyErr = err
+		}
 	}
+
 	if keyErr != nil {
-		return "", keyErr
+		return "", restic.ID{}, keyErr
 	}
+
+	return "", restic.ID{}, errors.New("no password found")
+}
+
+func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) {
+	repo, be, err := openRepository(ctx, opts)
 	if err != nil {
 		return "", err
 	}
+	defer func() {
+		_ = be.Close()
+	}()
 
-	return "", errors.New("no password found")
+	password, _, err := readPasswordViaIdentityPreferring(ctx, repo, opts, nil)
+	return password, err
 }
-
 func ageEncryptRandomKey(ctx context.Context, ageProgram string, pubkey string) (string, []byte, error) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -1145,29 +1642,43 @@ func readPassword(ctx context.Context, opts *options) (string, error) {
 	}
 }
 
-func openRepositoryWithPassword(ctx context.Context, opts options) (*repository.Repository, backend.Backend, error) {
+func openRepositoryWithPassword(ctx context.Context, opts options) (*repository.Repository, backend.Backend, string, error) {
+	return openRepositoryWithPasswordPreferring(ctx, opts, nil)
+}
+
+func openRepositoryWithPasswordPreferring(ctx context.Context, opts options, preferredPubkeys map[string]Recipient) (*repository.Repository, backend.Backend, string, error) {
 	repo, be, err := openRepository(ctx, opts)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
+	var identityKeyID restic.ID
 	password, err := readPassword(ctx, &opts)
 	if err != nil {
 		if opts.identityFile != "" || opts.identityCommand != "" {
-			password, err = readPasswordViaIdentity(ctx, opts)
+			password, identityKeyID, err = readPasswordViaIdentityPreferring(ctx, repo, opts, preferredPubkeys)
 		}
 
 		if err != nil {
-			return nil, nil, fmt.Errorf("Fatal: Resolving password failed: %w", err) //nolint:staticcheck
+			return nil, nil, "", fmt.Errorf("Fatal: Resolving password failed: %w", err) //nolint:staticcheck
 		}
 	}
 
-	err = repo.SearchKey(ctx, password, 20, "")
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to verify repository key: %w", err)
+	maxKeys := 20
+	keyHint := ""
+	if identityKeyID != (restic.ID{}) {
+		maxKeys = 1
+		keyHint = identityKeyID.String()
 	}
 
-	return repo, be, nil
+	if err := repo.SearchKey(ctx, password, maxKeys, keyHint); err != nil {
+		return nil, nil, "", fmt.Errorf("failed to verify repository key: %w", err)
+	}
+	if identityKeyID != (restic.ID{}) && repo.KeyID() != identityKeyID {
+		return nil, nil, "", fmt.Errorf("opened key %s instead of decrypted key %s", repo.KeyID().String(), identityKeyID.String())
+	}
+
+	return repo, be, password, nil
 }
 
 func openRepository(ctx context.Context, opts options) (*repository.Repository, backend.Backend, error) {

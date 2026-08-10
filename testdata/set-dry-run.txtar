@@ -18,7 +18,8 @@ exec restic-age-key set --dry-run --recipients-file=recipients.json
 cmp stderr restic-age-key-stderr.txt
 
 exec restic-age-key list
-stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
+stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw\s+clara\s+clara.local'
+! stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw\s+alice\s+alice.local'
 stdout 'age1th5qzv24ehstkdzljusxwcr4m2rfq4xvd662ppent47x4lqzgatsp7hvts'
 ! stdout 'age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr'
 
@@ -32,5 +33,7 @@ secret
 ]
 
 -- restic-age-key-stderr.txt --
+[DRY RUN] Add key age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw for alice@alice.local
 [DRY RUN] Add key age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr for bob@bob.local
+[DRY RUN] Remove key age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw for clara@clara.local
 [DRY RUN] Remove key age1th5qzv24ehstkdzljusxwcr4m2rfq4xvd662ppent47x4lqzgatsp7hvts for clara@clara.local

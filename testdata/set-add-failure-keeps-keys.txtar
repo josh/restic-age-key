@@ -1,0 +1,34 @@
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+
+exec chmod +x fake-age
+exec restic init
+exec restic-age-key add --recipient=age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw --user=alice --host=alice.local
+
+! exec restic-age-key set --age-program=$WORK/fake-age --recipients-file=recipients.json
+stderr 'failed to add key age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr'
+stderr 'failed to set keys'
+! stderr 'Remove key'
+
+exec restic-age-key list
+stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw\s+alice\s+alice.local'
+! stdout 'age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr'
+
+exec bash restic-key-count.bash
+stdout 2
+! stderr .
+
+-- password.txt --
+secret
+
+-- recipients.json --
+[
+    { "host": "bob.local", "user": "bob", "pubkey": "age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr" }
+]
+
+-- fake-age --
+#!/bin/sh
+exit 1
+
+-- restic-key-count.bash --
+restic key list --no-cache --json | jq length
