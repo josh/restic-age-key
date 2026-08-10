@@ -641,6 +641,42 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 		}
 	}
 
+	var inspectErr error
+	if opts.ifNotExists {
+		state, err := inspectRepository(ctx, opts, opts.recipientsFile == "")
+		if err != nil {
+			if ctx.Err() != nil {
+				return err
+			}
+			inspectErr = err
+		}
+
+		if err == nil && state.exists {
+			if opts.recipientsFile != "" {
+				if err := runKeySet(ctx, opts, args); err != nil {
+					return err
+				}
+			} else {
+				if len(state.ageKeys) == 0 {
+					return errors.New("repository is incompletely initialized: no age-encrypted keys found")
+				}
+
+				if opts.output != "" {
+					ids, missing := matchingAgeKeyIDs(state.ageKeys, []Recipient{{Pubkey: opts.recipient}})
+					if len(missing) > 0 {
+						return fmt.Errorf("recipient %s is not present in the existing repository", opts.recipient)
+					}
+					if err := writeRepoInitKeyIDs(opts.output, ids); err != nil {
+						return err
+					}
+				}
+			}
+
+			fmt.Fprintf(os.Stderr, "repository already initialized at %s\n", repositoryDisplayLocation(opts.repo))
+			return nil
+		}
+	}
+
 	preflight := recipients
 	if opts.recipientsFile == "" {
 		preflight = []Recipient{{Pubkey: opts.recipient}}
@@ -667,36 +703,8 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 		}
 	}
 
-	if opts.ifNotExists {
-		state, err := inspectRepository(ctx, opts, opts.recipientsFile == "")
-		if err != nil {
-			return err
-		}
-
-		if state.exists {
-			if opts.recipientsFile != "" {
-				if err := runKeySet(ctx, opts, args); err != nil {
-					return err
-				}
-			} else {
-				if len(state.ageKeys) == 0 {
-					return errors.New("repository is incompletely initialized: no age-encrypted keys found")
-				}
-
-				if opts.output != "" {
-					ids, missing := matchingAgeKeyIDs(state.ageKeys, []Recipient{{Pubkey: opts.recipient}})
-					if len(missing) > 0 {
-						return fmt.Errorf("recipient %s is not present in the existing repository", opts.recipient)
-					}
-					if err := writeRepoInitKeyIDs(opts.output, ids); err != nil {
-						return err
-					}
-				}
-			}
-
-			fmt.Fprintf(os.Stderr, "repository already initialized at %s\n", repositoryDisplayLocation(opts.repo))
-			return nil
-		}
+	if inspectErr != nil {
+		return inspectErr
 	}
 
 	if pol == nil {
