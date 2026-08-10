@@ -211,6 +211,9 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		Use:   "from-password",
 		Short: "Retrieve the password for a key",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if options.fromRepo == "" {
+				return errors.New("Fatal: Please specify repository location (--from-repo or RESTIC_FROM_REPOSITORY)") //nolint:staticcheck
+			}
 			options.repo = options.fromRepo
 			if options.timeout > 0 {
 				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
