@@ -18,7 +18,8 @@ stdout 'age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr\s+bob\s+n
 ! stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw\s+alice\s+alice.local'
 ! stdout 'age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr\s+bob\s+old.local'
 
-exec bash restic-key-count.bash
+exec restic key list --no-cache --json
+json-len stdout
 stdout 3
 ! stderr .
 
@@ -26,7 +27,8 @@ exec restic-age-key set --recipients-file=recipients.json
 ! stdout .
 ! stderr .
 
-exec bash restic-key-count.bash
+exec restic key list --no-cache --json
+json-len stdout
 stdout 3
 ! stderr .
 
@@ -38,6 +40,3 @@ secret
     { "host": "alice.local", "user": "carol", "pubkey": "age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw" },
     { "host": "new.local", "user": "bob", "pubkey": "age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr" }
 ]
-
--- restic-key-count.bash --
-restic key list --no-cache --json | jq length

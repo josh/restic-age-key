@@ -15,11 +15,11 @@ cmp $WORK/initial-keyid.txt $WORK/repeat-keyid.txt
 stderr '--output must not refer to the same file as --identity-file'
 ! stderr 'repository already initialized'
 
-exec ln $WORK/key.txt $WORK/key-hardlink.txt
+hardlink $WORK/key.txt $WORK/key-hardlink.txt
 ! exec restic-age-key repo-init --if-not-exists --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt --output $WORK/key-hardlink.txt
 stderr '--output must not refer to the same file as --identity-file'
 
-exec ln -s $WORK/key.txt $WORK/key-symlink.txt
+symlink $WORK/key-symlink.txt -> $WORK/key.txt
 ! exec restic-age-key repo-init --if-not-exists --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt --output $WORK/key-symlink.txt
 stderr '--output must not refer to the same file as --identity-file'
 

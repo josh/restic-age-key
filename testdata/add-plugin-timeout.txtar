@@ -4,9 +4,6 @@ env RESTIC_AGE_USER=alice
 env RESTIC_AGE_HOST=localhost
 env RESTIC_AGE_RECIPIENT=age1hang1vehk7dvqyl7
 
-exec chmod +x age-plugin-hang
-env PATH=$WORK:$PATH
-
 exec restic init
 
 ! exec restic-age-key add --timeout=5s
@@ -18,11 +15,6 @@ exec restic-age-key list
 
 -- password.txt --
 secret
-
--- age-plugin-hang --
-#!/bin/sh
-sleep 10
-exit 1
 
 -- restic-age-key-stderr.txt --
 timeout exceeded while encrypting key with age

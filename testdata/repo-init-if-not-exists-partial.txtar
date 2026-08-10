@@ -1,28 +1,14 @@
 env RESTIC_AGE_USER=alice
 env RESTIC_AGE_HOST=alice.local
 
-chmod 755 $WORK/flaky-age
-
-! exec restic-age-key --age-program $WORK/flaky-age repo-init --if-not-exists --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt
+! exec restic-age-key --age-program flaky-age repo-init --if-not-exists --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt
 stderr 'failed to create age key'
 ! stderr 'created restic repository'
 exists $WORK/repo/config
 
-! exec restic-age-key --age-program $WORK/flaky-age repo-init --if-not-exists --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt
+! exec restic-age-key --age-program flaky-age repo-init --if-not-exists --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt
 stderr 'repository is incompletely initialized: no age-encrypted keys found'
 ! stderr 'repository already initialized'
-
--- flaky-age --
-#!/bin/sh
-set -eu
-
-if [ -f "$WORK/repo/config" ] && [ ! -f "$WORK/failed-after-init" ]; then
-    touch "$WORK/failed-after-init"
-    cat >/dev/null
-    exit 1
-fi
-
-exec age "$@"
 
 -- key.txt --
 AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY

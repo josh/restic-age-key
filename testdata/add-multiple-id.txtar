@@ -8,17 +8,16 @@ exec restic-age-key add --password-file $WORK/password.txt --recipient age1yyc2s
 ! stdout .
 cmp stderr restic-age-key-key-a-stderr.txt
 
-exec cat keyid-a.txt
-stdout [a-f0-9]{8}
+grep '^[a-f0-9]{8}$' keyid-a.txt
 
 exec restic-age-key add --password-file $WORK/password.txt --recipient age1ljvnfh04dyagjkpt6z8zrgw3vlthhy4g0vtug709gmh764rj2vgqdx84qr --output keyid-b.txt
 ! stdout .
 cmp stderr restic-age-key-key-b-stderr.txt
 
-exec cat keyid-b.txt
-stdout [a-f0-9]{8}
+grep '^[a-f0-9]{8}$' keyid-b.txt
 
-exec bash restic-key-count.bash
+exec restic key list --no-cache --json --password-file password.txt
+json-len stdout
 stdout 3
 ! stderr .
 
@@ -30,17 +29,17 @@ exec restic-age-key password --identity-file key-b.txt --output password-b.txt
 ! stdout .
 ! stderr .
 
-exec bash restic-current-keyid.bash password-a.txt
+exec restic key list --no-cache --json --password-file password-a.txt
+json-filter stdout current=true
+json-get stdout id
+cut-chars stdout 8
 cmp stdout keyid-a.txt
 
-exec bash restic-current-keyid.bash password-b.txt
+exec restic key list --no-cache --json --password-file password-b.txt
+json-filter stdout current=true
+json-get stdout id
+cut-chars stdout 8
 cmp stdout keyid-b.txt
-
--- restic-key-count.bash --
-restic key list --password-file password.txt --no-cache --json | jq length
-
--- restic-current-keyid.bash --
-restic key list --no-cache --password-file "$1" --json | jq --raw-output '.[] | select(.current) | .id[0:8]'
 
 -- password.txt --
 secret

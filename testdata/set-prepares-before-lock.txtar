@@ -1,16 +1,15 @@
 env RESTIC_REPOSITORY=$WORK/repo
 env RESTIC_PASSWORD_FILE=$WORK/password.txt
 
-exec chmod 0755 blocking-age
 exec restic init
 
-exec restic-age-key set --age-program=$WORK/blocking-age --recipients-file=recipients.json &setter&
-exec bash wait-for-file.bash $WORK/age-started
+exec restic-age-key set --age-program=blocking-age --recipients-file=recipients.json &setter&
+wait4file $WORK/age-started
 
 exec restic-age-key add --recipient=age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr --user=mallory --host=other.local
 stderr 'Add key age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr for mallory@other.local'
 
-exec touch $WORK/release-age
+touch $WORK/release-age
 wait setter
 stderr 'Add key age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw for alice@alice.local'
 stderr 'Remove key age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr for mallory@other.local'
@@ -26,28 +25,3 @@ secret
 [
     { "host": "alice.local", "user": "alice", "pubkey": "age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw" }
 ]
-
--- blocking-age --
-#!/bin/sh
-set -eu
-: > "$WORK/age-started"
-attempt=0
-while [ ! -e "$WORK/release-age" ]; do
-	attempt=$((attempt + 1))
-	if [ "$attempt" -ge 200 ]; then
-		echo "timed out waiting for release-age" >&2
-		exit 1
-	fi
-	sleep 0.05
-done
-exec age "$@"
-
--- wait-for-file.bash --
-set -euo pipefail
-for _ in {1..200}; do
-    if [[ -e "$1" ]]; then
-        exit 0
-    fi
-    sleep 0.05
-done
-exit 1
