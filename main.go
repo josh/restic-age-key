@@ -1912,6 +1912,9 @@ func inspectRepository(ctx context.Context, opts options, loadAgeKeys bool) (rep
 	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
 		data, err := repo.LoadRaw(ctx, restic.KeyFile, id)
 		if err != nil {
+			if errors.Is(err, restic.ErrInvalidData) {
+				return nil
+			}
 			return fmt.Errorf("failed to load key %s: %w", id.Str(), err)
 		}
 
