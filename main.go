@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -61,6 +62,7 @@ type options struct {
 	timeout           time.Duration
 	dryRun            bool
 	chunkerPolynomial string
+	ifNotExists       bool
 }
 
 func newRootCommand() *cobra.Command {
@@ -242,6 +244,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	repoInitCommand.Flags().StringVar(&options.host, "host", options.host, "hostname for key (env: RESTIC_AGE_HOST)")
 	repoInitCommand.Flags().StringVar(&options.chunkerPolynomial, "chunker-polynomial", options.chunkerPolynomial, "chunker polynomial in hex format (e.g. 0x3DA3358B4DC173) (env: RESTIC_AGE_CHUNKER_POLYNOMIAL)")
 	repoInitCommand.Flags().StringVar(&options.output, "output", "", "output file to write key ID to")
+	repoInitCommand.Flags().BoolVar(&options.ifNotExists, "if-not-exists", false, "succeed if the repository already exists; --recipient is creation-only, while --recipients-file reconciles existing keys")
 
 	cmd.AddCommand(
 		listCommand,
@@ -612,8 +615,11 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 	if opts.recipient != "" && opts.recipientsFile != "" {
 		return errors.New("Fatal: Cannot specify both --recipient and --recipients-file") //nolint:staticcheck
 	}
+	if err := validateRepoInitOutputPaths(opts); err != nil {
+		return err
+	}
 
-	pol, err := getChunkerPolynomial(opts)
+	pol, err := parseChunkerPolynomial(opts.chunkerPolynomial)
 	if err != nil {
 		return fmt.Errorf("failed to get chunker polynomial: %w", err)
 	}
@@ -627,6 +633,11 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 
 		if len(recipients) == 0 {
 			return errors.New("Fatal: Recipients file contains no recipients") //nolint:staticcheck
+		}
+
+		recipients, _, err = prepareSetRecipients(recipients)
+		if err != nil {
+			return fmt.Errorf("Fatal: Invalid recipients file: %w", err) //nolint:staticcheck
 		}
 	}
 
@@ -653,6 +664,45 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 
 		if _, _, err := ageEncryptRandomKey(ctx, opts.ageProgram, recipient.Pubkey); err != nil {
 			return fmt.Errorf("invalid age recipient %s: %w", recipient.Pubkey, err)
+		}
+	}
+
+	if opts.ifNotExists {
+		state, err := inspectRepository(ctx, opts, opts.recipientsFile == "")
+		if err != nil {
+			return err
+		}
+
+		if state.exists {
+			if opts.recipientsFile != "" {
+				if err := runKeySet(ctx, opts, args); err != nil {
+					return err
+				}
+			} else {
+				if len(state.ageKeys) == 0 {
+					return errors.New("repository is incompletely initialized: no age-encrypted keys found")
+				}
+
+				if opts.output != "" {
+					ids, missing := matchingAgeKeyIDs(state.ageKeys, []Recipient{{Pubkey: opts.recipient}})
+					if len(missing) > 0 {
+						return fmt.Errorf("recipient %s is not present in the existing repository", opts.recipient)
+					}
+					if err := writeRepoInitKeyIDs(opts.output, ids); err != nil {
+						return err
+					}
+				}
+			}
+
+			fmt.Fprintf(os.Stderr, "repository already initialized at %s\n", repositoryDisplayLocation(opts.repo))
+			return nil
+		}
+	}
+
+	if pol == nil {
+		pol, err = getChunkerPolynomial(opts)
+		if err != nil {
+			return fmt.Errorf("failed to get chunker polynomial: %w", err)
 		}
 	}
 
@@ -711,7 +761,7 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 		return fmt.Errorf("failed to remove temporary password key: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "created restic repository %s at %s\n", repoID.Str(), opts.repo)
+	fmt.Fprintf(os.Stderr, "created restic repository %s at %s\n", repoID.Str(), repositoryDisplayLocation(opts.repo))
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Please note that knowledge of your age identity is required to access")
 	fmt.Fprintln(os.Stderr, "the repository. Losing your identity means that your data is")
@@ -736,25 +786,148 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 	}
 
 	if opts.output != "" {
-		file, err := os.Create(opts.output)
-		if err != nil {
-			return fmt.Errorf("failed to create output file: %w", err)
-		}
-
-		for _, ageKeyID := range ageKeyIDs {
-			_, err = file.WriteString(ageKeyID.Str()[0:8] + "\n")
-			if err != nil {
-				_ = file.Close()
-				return fmt.Errorf("failed to write to output file: %w", err)
-			}
-		}
-
-		if err := file.Close(); err != nil {
-			return fmt.Errorf("failed to write to output file: %w", err)
+		if err := writeRepoInitKeyIDs(opts.output, ageKeyIDs); err != nil {
+			return err
 		}
 	}
 
 	return nil
+}
+
+func matchingAgeKeyIDs(ageKeys []Recipient, desired []Recipient) ([]restic.ID, []string) {
+	desiredPubkeys := make(map[string]struct{}, len(desired))
+	for _, recipient := range desired {
+		desiredPubkeys[recipient.Pubkey] = struct{}{}
+	}
+
+	found := make(map[string]struct{}, len(desiredPubkeys))
+	ids := make([]restic.ID, 0, len(ageKeys))
+	for _, key := range ageKeys {
+		if _, ok := desiredPubkeys[key.Pubkey]; !ok {
+			continue
+		}
+		found[key.Pubkey] = struct{}{}
+		ids = append(ids, key.ID)
+	}
+
+	missing := make([]string, 0)
+	for pubkey := range desiredPubkeys {
+		if _, ok := found[pubkey]; !ok {
+			missing = append(missing, pubkey)
+		}
+	}
+
+	sort.Slice(ids, func(i, j int) bool {
+		return ids[i].String() < ids[j].String()
+	})
+	sort.Strings(missing)
+	return ids, missing
+}
+
+func writeRepoInitKeyIDs(path string, ids []restic.ID) error {
+	if len(ids) == 0 {
+		return errors.New("no age key IDs available for output")
+	}
+
+	ids = append([]restic.ID(nil), ids...)
+	sort.Slice(ids, func(i, j int) bool {
+		return ids[i].String() < ids[j].String()
+	})
+
+	dir := filepath.Dir(path)
+	file, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-")
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %w", err)
+	}
+	tempPath := file.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = file.Close()
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	if err := file.Chmod(0o600); err != nil {
+		return fmt.Errorf("failed to secure output file: %w", err)
+	}
+
+	lastID := ""
+	for _, id := range ids {
+		if id.String() == lastID {
+			continue
+		}
+		if _, err := file.WriteString(id.Str()[0:8] + "\n"); err != nil {
+			_ = file.Close()
+			return fmt.Errorf("failed to write to output file: %w", err)
+		}
+		lastID = id.String()
+	}
+
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("failed to write to output file: %w", err)
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("failed to replace output file: %w", err)
+	}
+	cleanup = false
+	return nil
+}
+
+func validateRepoInitOutputPaths(opts options) error {
+	if opts.output == "" {
+		return nil
+	}
+
+	inputs := []struct {
+		flag string
+		path string
+	}{
+		{flag: "--identity-file", path: opts.identityFile},
+		{flag: "--recipients-file", path: opts.recipientsFile},
+		{flag: "--password-file", path: opts.passwordFile},
+	}
+	for _, input := range inputs {
+		if input.path == "" {
+			continue
+		}
+
+		same, err := sameFilePath(opts.output, input.path)
+		if err != nil {
+			return fmt.Errorf("failed to compare --output and %s: %w", input.flag, err)
+		}
+		if same {
+			return fmt.Errorf("--output must not refer to the same file as %s", input.flag)
+		}
+	}
+	return nil
+}
+
+func sameFilePath(pathA, pathB string) (bool, error) {
+	absA, err := filepath.Abs(pathA)
+	if err != nil {
+		return false, err
+	}
+	absB, err := filepath.Abs(pathB)
+	if err != nil {
+		return false, err
+	}
+	if filepath.Clean(absA) == filepath.Clean(absB) {
+		return true, nil
+	}
+
+	infoA, errA := os.Stat(absA)
+	if errA != nil && !errors.Is(errA, os.ErrNotExist) {
+		return false, errA
+	}
+	infoB, errB := os.Stat(absB)
+	if errB != nil && !errors.Is(errB, os.ErrNotExist) {
+		return false, errB
+	}
+	if errA == nil && errB == nil {
+		return os.SameFile(infoA, infoB), nil
+	}
+	return false, nil
 }
 
 func parseChunkerPolynomial(hexStr string) (*chunker.Pol, error) {
@@ -792,25 +965,9 @@ func getChunkerPolynomial(opts options) (*chunker.Pol, error) {
 }
 
 func initializeRepository(ctx context.Context, opts options, password string, pol *chunker.Pol) (*repository.Repository, backend.Backend, restic.ID, error) {
-	backends := collectBackends()
-
-	loc, err := location.Parse(backends, opts.repo)
+	be, err := createOrOpenBackend(ctx, opts, true)
 	if err != nil {
-		return nil, nil, restic.ID{}, fmt.Errorf("failed to parse repository location: %w", err)
-	}
-
-	cfg := loc.Config
-	if rcloneCfg, ok := cfg.(*rclone.Config); ok {
-		rcloneCfg.Program = opts.rcloneProgram
-	}
-
-	rt, _ := backend.Transport(backend.TransportOptions{})
-	lim := limiter.NewStaticLimiter(limiter.Limits{})
-	factory := backends.Lookup(loc.Scheme)
-
-	be, err := factory.Create(ctx, cfg, rt, lim, backendErrorLog)
-	if err != nil {
-		return nil, nil, restic.ID{}, fmt.Errorf("failed to create backend: %w", err)
+		return nil, nil, restic.ID{}, err
 	}
 
 	repo, err := repository.New(be, repository.Options{})
@@ -1375,6 +1532,26 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 	if hasError {
 		return errors.New("failed to set keys")
 	}
+	if opts.output != "" && !opts.dryRun {
+		finalInventory, err := inspectSetKeys(ctx, repo)
+		if err != nil {
+			return fmt.Errorf("failed to inspect reconciled repository keys: %w", err)
+		}
+
+		var finalRecipients []Recipient
+		for _, recipients := range finalInventory.recipients {
+			for _, recipient := range recipients {
+				finalRecipients = append(finalRecipients, recipient.Recipient)
+			}
+		}
+		ids, missing := matchingAgeKeyIDs(finalRecipients, setRecipients)
+		if len(missing) > 0 {
+			return fmt.Errorf("repository is missing age keys for recipients: %s", strings.Join(missing, ", "))
+		}
+		if err := writeRepoInitKeyIDs(opts.output, ids); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -1681,26 +1858,79 @@ func openRepositoryWithPasswordPreferring(ctx context.Context, opts options, pre
 	return repo, be, password, nil
 }
 
+type repositoryState struct {
+	exists  bool
+	ageKeys []Recipient
+}
+
+func inspectRepository(ctx context.Context, opts options, loadAgeKeys bool) (repositoryState, error) {
+	be, err := createOrOpenBackend(ctx, opts, false)
+	if err != nil {
+		if errors.Is(err, backend.ErrNoRepository) {
+			return repositoryState{}, nil
+		}
+		return repositoryState{}, err
+	}
+	defer func() {
+		_ = be.Close()
+	}()
+
+	_, err = be.Stat(ctx, backend.Handle{Type: restic.ConfigFile})
+	if err != nil {
+		if be.IsNotExist(err) {
+			return repositoryState{}, nil
+		}
+		return repositoryState{}, fmt.Errorf("unable to open config file: %w", err)
+	}
+	if !loadAgeKeys {
+		return repositoryState{exists: true}, nil
+	}
+
+	repo, err := repository.New(be, repository.Options{})
+	if err != nil {
+		return repositoryState{}, fmt.Errorf("failed to initialize repository: %w", err)
+	}
+
+	var ageKeys []Recipient
+	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
+		data, err := repo.LoadRaw(ctx, restic.KeyFile, id)
+		if err != nil {
+			return fmt.Errorf("failed to load key %s: %w", id.Str(), err)
+		}
+
+		var key AgeKey
+		if err := json.Unmarshal(data, &key); err != nil {
+			return fmt.Errorf("failed to parse key %s: %w", id.Str(), err)
+		}
+		if key.AgePubkey == "" {
+			return nil
+		}
+		if len(key.AgeData) == 0 || len(key.Data) == 0 {
+			return fmt.Errorf("age key %s is incomplete", id.Str())
+		}
+
+		ageKeys = append(ageKeys, Recipient{
+			ID:     id,
+			Pubkey: key.AgePubkey,
+			Host:   key.Hostname,
+			User:   key.Username,
+		})
+		return nil
+	})
+	if err != nil {
+		return repositoryState{}, fmt.Errorf("failed to inspect repository keys: %w", err)
+	}
+
+	sort.Slice(ageKeys, func(i, j int) bool {
+		return ageKeys[i].ID.String() < ageKeys[j].ID.String()
+	})
+	return repositoryState{exists: true, ageKeys: ageKeys}, nil
+}
+
 func openRepository(ctx context.Context, opts options) (*repository.Repository, backend.Backend, error) {
-	backends := collectBackends()
-
-	loc, err := location.Parse(backends, opts.repo)
+	be, err := createOrOpenBackend(ctx, opts, false)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse repository location: %w", err)
-	}
-
-	cfg := loc.Config
-	if rcloneCfg, ok := cfg.(*rclone.Config); ok {
-		rcloneCfg.Program = opts.rcloneProgram
-	}
-
-	rt, _ := backend.Transport(backend.TransportOptions{})
-	lim := limiter.NewStaticLimiter(limiter.Limits{})
-	factory := backends.Lookup(loc.Scheme)
-
-	be, err := factory.Open(ctx, cfg, rt, lim, backendErrorLog)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to open backend: %w", err)
+		return nil, nil, err
 	}
 
 	r, err := repository.New(be, repository.Options{})
@@ -1717,6 +1947,48 @@ func openRepository(ctx context.Context, opts options) (*repository.Repository, 
 	}
 
 	return r, be, nil
+}
+
+func createOrOpenBackend(ctx context.Context, opts options, create bool) (backend.Backend, error) {
+	backends := collectBackends()
+
+	loc, err := location.Parse(backends, opts.repo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse repository location: %w", err)
+	}
+
+	cfg := loc.Config
+	if rcloneCfg, ok := cfg.(*rclone.Config); ok {
+		rcloneCfg.Program = opts.rcloneProgram
+	}
+
+	rt, err := backend.Transport(backend.TransportOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create backend transport: %w", err)
+	}
+	lim := limiter.NewStaticLimiter(limiter.Limits{})
+	factory := backends.Lookup(loc.Scheme)
+	if factory == nil {
+		return nil, fmt.Errorf("unknown repository backend: %s", loc.Scheme)
+	}
+
+	if create {
+		be, err := factory.Create(ctx, cfg, rt, lim, backendErrorLog)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create backend: %w", err)
+		}
+		return be, nil
+	}
+
+	be, err := factory.Open(ctx, cfg, rt, lim, backendErrorLog)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open backend: %w", err)
+	}
+	return be, nil
+}
+
+func repositoryDisplayLocation(repo string) string {
+	return location.StripPassword(collectBackends(), repo)
 }
 
 func backendErrorLog(msg string, args ...interface{}) {

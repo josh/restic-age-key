@@ -1,0 +1,112 @@
+env RESTIC_AGE_USER=default
+env RESTIC_AGE_HOST=default.local
+
+! exec restic-age-key repo-init --if-not-exists --repo $WORK/conflict-repo --recipients-file $WORK/conflicting.json --identity-file $WORK/key.txt
+stderr 'Fatal: Invalid recipients file: conflicting entries for pubkey age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
+! exists $WORK/conflict-repo/config
+
+exec restic-age-key repo-init --if-not-exists --repo $WORK/repo --recipients-file $WORK/recipients.json --identity-file $WORK/key.txt
+stderr 'created restic repository [a-f0-9]{8} at'
+stderr 'age key [a-f0-9]{8} for alice@alice.local'
+stderr 'age key [a-f0-9]{8} for bob@bob.local'
+
+exec restic-age-key list --repo $WORK/repo --identity-file $WORK/key.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
+stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
+! stdout 'age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr'
+
+! exec restic-age-key repo-init --if-not-exists --repo $WORK/repo --recipients-file $WORK/empty.json --identity-file $WORK/key.txt
+stderr 'Fatal: Recipients file contains no recipients'
+! stderr 'Add key'
+! stderr 'Remove key'
+
+exec restic-age-key list --repo $WORK/repo --identity-file $WORK/key.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
+stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
+! stdout 'age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr'
+
+exec cp $WORK/recipients2.json $WORK/recipients2-before.json
+! exec restic-age-key repo-init --if-not-exists --repo $WORK/repo --recipients-file $WORK/recipients2.json --identity-file $WORK/key.txt --output $WORK/recipients2.json
+stderr '--output must not refer to the same file as --recipients-file'
+cmp $WORK/recipients2-before.json $WORK/recipients2.json
+
+exec restic-age-key repo-init --if-not-exists --repo $WORK/repo --recipients-file $WORK/recipients2.json --identity-file $WORK/key.txt --output $WORK/reconciled-keyids.txt
+stderr 'repository already initialized at'
+! stderr 'created restic repository'
+
+exec restic-age-key list --repo $WORK/repo --identity-file $WORK/key.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
+! stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
+stdout 'age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr'
+
+exec cat $WORK/reconciled-keyids.txt
+stdout '^[a-f0-9]{8}\n[a-f0-9]{8}\n$'
+
+exec restic-age-key password --repo $WORK/repo --identity-file $WORK/key.txt --output $WORK/password.txt
+exec bash assert-keyids.bash $WORK/repo $WORK/password.txt $WORK/reconciled-keyids.txt
+
+exec restic-age-key repo-init --if-not-exists --repo $WORK/repo --recipients-file $WORK/recipients2.json --identity-file $WORK/key.txt --output $WORK/repeat-keyids.txt
+stderr 'repository already initialized at'
+cmp $WORK/reconciled-keyids.txt $WORK/repeat-keyids.txt
+exec bash assert-keyids.bash $WORK/repo $WORK/password.txt $WORK/repeat-keyids.txt
+
+exec bash corrupt-replacement.bash $WORK/repo
+exec restic-age-key repo-init --if-not-exists --repo $WORK/repo --recipients-file $WORK/recipients3.json --identity-file $WORK/key.txt --output $WORK/repaired-keyids.txt
+stderr 'repository already initialized at'
+exec bash assert-keyids.bash $WORK/repo $WORK/password.txt $WORK/repaired-keyids.txt
+
+exec restic-age-key list --repo $WORK/repo --identity-file $WORK/key.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7\s+alice\s+new.local'
+stdout 'age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr\s+carol\s+carol.local'
+
+-- key.txt --
+AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY
+
+-- recipients.json --
+[
+    { "host": "alice.local", "user": "alice", "pubkey": "age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7" },
+    { "host": "bob.local", "user": "bob", "pubkey": "age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw" }
+]
+
+-- recipients2.json --
+[
+    { "host": "alice.local", "user": "alice", "pubkey": "age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7" },
+    { "host": "carol.local", "user": "carol", "pubkey": "age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr" }
+]
+
+-- recipients3.json --
+[
+    { "host": "new.local", "user": "alice", "pubkey": "age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7" },
+    { "host": "carol.local", "user": "carol", "pubkey": "age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr" }
+]
+
+-- conflicting.json --
+[
+    { "host": "alice.local", "user": "alice", "pubkey": "age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7" },
+    { "host": "alice.local", "user": "mallory", "pubkey": "age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7" }
+]
+
+-- empty.json --
+[]
+
+-- assert-keyids.bash --
+set -euo pipefail
+restic key list --repo "$1" --password-file "$2" --no-cache --json |
+    jq --raw-output '.[].id[0:8]' |
+    sort > "$WORK/repository-keyids.txt"
+sort "$3" > "$WORK/output-keyids.txt"
+cmp "$WORK/repository-keyids.txt" "$WORK/output-keyids.txt"
+
+-- corrupt-replacement.bash --
+set -euo pipefail
+for key_file in "$1"/keys/*; do
+    if [[ $(jq --raw-output '."age-pubkey" // empty' "$key_file") == "age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7" ]]; then
+        replacement=$(jq --compact-output --sort-keys '.hostname = "new.local"' "$key_file")
+        printf '%s' "$replacement" > "$WORK/replacement-key.json"
+        replacement_id=$(sha256sum "$WORK/replacement-key.json")
+        replacement_id=${replacement_id%% *}
+        printf 'corrupt' > "$1/keys/$replacement_id"
+        exit 0
+    fi
+done
+exit 1
