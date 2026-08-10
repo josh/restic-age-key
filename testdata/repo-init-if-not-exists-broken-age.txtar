@@ -1,0 +1,35 @@
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=alice.local
+
+exec restic-age-key repo-init --repo $WORK/repo --recipients-file $WORK/recipients.json --identity-file $WORK/key.txt
+stderr 'created restic repository'
+
+exec restic-age-key password --repo $WORK/repo --identity-file $WORK/key.txt --output $WORK/password.txt
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+
+exec chmod +x $WORK/broken-age
+
+exec restic-age-key repo-init --if-not-exists --repo $WORK/repo --recipients-file $WORK/recipients.json --age-program $WORK/broken-age
+stderr 'repository already initialized at'
+! stderr 'invalid age recipient'
+
+exec restic-age-key repo-init --if-not-exists --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --age-program $WORK/broken-age
+stderr 'repository already initialized at'
+! stderr 'invalid age recipient'
+
+! exec restic-age-key repo-init --if-not-exists --repo $WORK/new-repo --recipients-file $WORK/recipients.json --age-program $WORK/broken-age
+stderr 'invalid age recipient'
+! exists $WORK/new-repo/config
+
+-- key.txt --
+AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY
+
+-- recipients.json --
+[
+    { "host": "alice.local", "user": "alice", "pubkey": "age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7" }
+]
+
+-- broken-age --
+#!/bin/sh
+echo "age: error: plugin unavailable" >&2
+exit 1

@@ -1,0 +1,13 @@
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=alice.local
+
+exec chmod +x $WORK/slow-rclone
+
+! exec restic-age-key --rclone-program $WORK/slow-rclone --timeout 1s repo-init --if-not-exists --repo rclone:local:foo:/bar --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+! stderr 'invalid age recipient'
+stderr 'failed to open backend'
+stderr 'context deadline exceeded'
+
+-- slow-rclone --
+#!/bin/sh
+sleep 30
