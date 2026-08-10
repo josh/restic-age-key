@@ -1,0 +1,14 @@
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=alice.local
+
+! exec restic-age-key --rclone-program $WORK/missing-rclone repo-init --if-not-exists --repo rclone:local:foo:/bar --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --chunker-polynomial invalid
+stderr 'failed to get chunker polynomial'
+! stderr 'failed to open backend'
+
+! exec restic-age-key --age-program $WORK/missing-age --rclone-program $WORK/missing-rclone repo-init --if-not-exists --repo rclone:local:foo:/bar --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+stderr 'invalid age recipient'
+! stderr 'failed to open backend'
+
+! exec restic-age-key --rclone-program $WORK/missing-rclone repo-init --if-not-exists --repo rclone:local:foo:/bar --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+stderr 'failed to open backend'
+! stderr 'failed to create backend'
