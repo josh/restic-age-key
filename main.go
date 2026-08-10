@@ -952,7 +952,8 @@ func parseChunkerPolynomial(hexStr string) (*chunker.Pol, error) {
 		return nil, nil
 	}
 
-	val, err := strconv.ParseUint(hexStr, 0, 64)
+	digits := strings.TrimPrefix(strings.TrimPrefix(hexStr, "0x"), "0X")
+	val, err := strconv.ParseUint(digits, 16, 64)
 	if err != nil {
 		return nil, fmt.Errorf("invalid chunker polynomial: %w", err)
 	}
