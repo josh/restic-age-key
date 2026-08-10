@@ -1,0 +1,29 @@
+env RESTIC_REPOSITORY=$WORK/repo
+exec restic init --password-file $WORK/password.txt
+exec restic-age-key add --password-file $WORK/password.txt --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+
+cp $WORK/key.txt $WORK/key-before.txt
+! exec restic-age-key password --identity-file $WORK/key.txt --output $WORK/key.txt
+stderr 'output must not refer to the same file as --identity-file'
+cmp $WORK/key.txt $WORK/key-before.txt
+
+cp $WORK/password.txt $WORK/password-before.txt
+! exec restic-age-key add --password-file $WORK/password.txt --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --output $WORK/password.txt
+stderr 'output must not refer to the same file as --password-file'
+cmp $WORK/password.txt $WORK/password-before.txt
+
+exec restic-age-key list --password-file $WORK/password.txt
+stdout -count=1 age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+
+exec restic-age-key password --identity-file $WORK/key.txt
+stdout '^[a-f0-9]{64}\n$'
+
+env RESTIC_PASSWORD_FILE=$WORK/restic-password.txt
+exec restic-age-key password --identity-file $WORK/key.txt --output $WORK/restic-password.txt
+grep '^[a-f0-9]{64}$' $WORK/restic-password.txt
+
+-- password.txt --
+secret
+
+-- key.txt --
+AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY

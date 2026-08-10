@@ -511,6 +511,13 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		return errors.New("Fatal: Please specify repository location (-r or --repository-file)") //nolint:staticcheck
 	}
 
+	if err := validateOutputPaths(opts.output, []outputInput{
+		{flag: "--identity-file", path: opts.identityFile},
+		{flag: "--password-file", path: opts.passwordFile},
+	}); err != nil {
+		return err
+	}
+
 	repo, be, currentPassword, err := openRepositoryWithPassword(ctx, opts)
 	if err != nil {
 		return err
@@ -580,6 +587,12 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 		return errors.New("Fatal: Please specify repository location (-r or --repository-file)") //nolint:staticcheck
 	}
 
+	if err := validateOutputPaths(opts.output, []outputInput{
+		{flag: "--identity-file", path: opts.identityFile},
+	}); err != nil {
+		return err
+	}
+
 	password, err := readPasswordViaIdentity(ctx, opts)
 	if err != nil {
 		return err
@@ -618,7 +631,11 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 	if opts.recipient != "" && opts.recipientsFile != "" {
 		return errors.New("Fatal: Cannot specify both --recipient and --recipients-file") //nolint:staticcheck
 	}
-	if err := validateRepoInitOutputPaths(opts); err != nil {
+	if err := validateOutputPaths(opts.output, []outputInput{
+		{flag: "--identity-file", path: opts.identityFile},
+		{flag: "--recipients-file", path: opts.recipientsFile},
+		{flag: "--password-file", path: opts.passwordFile},
+	}); err != nil {
 		return err
 	}
 
@@ -877,25 +894,22 @@ func writeRepoInitKeyIDs(path string, ids []restic.ID) error {
 	return nil
 }
 
-func validateRepoInitOutputPaths(opts options) error {
-	if opts.output == "" {
+type outputInput struct {
+	flag string
+	path string
+}
+
+func validateOutputPaths(output string, inputs []outputInput) error {
+	if output == "" {
 		return nil
 	}
 
-	inputs := []struct {
-		flag string
-		path string
-	}{
-		{flag: "--identity-file", path: opts.identityFile},
-		{flag: "--recipients-file", path: opts.recipientsFile},
-		{flag: "--password-file", path: opts.passwordFile},
-	}
 	for _, input := range inputs {
 		if input.path == "" {
 			continue
 		}
 
-		same, err := sameFilePath(opts.output, input.path)
+		same, err := sameFilePath(output, input.path)
 		if err != nil {
 			return fmt.Errorf("failed to compare --output and %s: %w", input.flag, err)
 		}
