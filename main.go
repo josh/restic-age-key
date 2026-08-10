@@ -1704,6 +1704,9 @@ func ageEncryptRandomKey(ctx context.Context, ageProgram string, pubkey string) 
 
 		return "", nil, fmt.Errorf("failed to encrypt key with age: %w", err)
 	}
+	if len(out) == 0 {
+		return "", nil, errors.New("age returned no encrypted data")
+	}
 
 	return hex.EncodeToString(key), out, nil
 }

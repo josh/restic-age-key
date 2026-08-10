@@ -1,0 +1,3 @@
+! exec restic-age-key --age-program silent-age repo-init --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+stderr 'age returned no encrypted data'
+! exists $WORK/repo/config

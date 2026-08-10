@@ -27,6 +27,7 @@ func TestMain(m *testing.M) {
 		"hang":       hangMain,
 
 		"fake-age":         fakeAgeMain,
+		"silent-age":       silentAgeMain,
 		"broken-age":       brokenAgeMain,
 		"flaky-age":        flakyAgeMain,
 		"blocking-age":     blockingAgeMain,
@@ -125,6 +126,10 @@ func hangMain() {
 
 func fakeAgeMain() {
 	os.Exit(1)
+}
+
+func silentAgeMain() {
+	_, _ = io.Copy(io.Discard, os.Stdin)
 }
 
 func brokenAgeMain() {
