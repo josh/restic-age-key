@@ -1619,6 +1619,9 @@ func readRecipientsFile(path string) ([]Recipient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse recipients file as JSON: %w", err)
 	}
+	if recipients == nil {
+		return nil, errors.New("recipients file must contain a JSON array")
+	}
 
 	return recipients, nil
 }

@@ -1,0 +1,23 @@
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+
+exec restic init
+exec restic-age-key add --recipient age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw --user alice --host alice.local
+
+! exec restic-age-key set --recipients-file null.json
+stderr 'recipients file must contain a JSON array'
+! stderr 'Add key|Remove key'
+
+exec restic-age-key list
+stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw\s+alice\s+alice.local'
+
+exec restic key list --no-cache --json
+json-len stdout
+stdout 2
+! stderr .
+
+-- password.txt --
+secret
+
+-- null.json --
+null
