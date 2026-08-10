@@ -3,7 +3,13 @@ env RESTIC_PASSWORD_FILE=$WORK/password.txt
 
 exec restic init
 exec restic-age-key add --recipient=age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw --user=alice --host=old.local
-exec bash empty-host.bash
+json-find $RESTIC_REPOSITORY/keys age-pubkey=age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw
+capture-output VICTIM_ID
+cp $RESTIC_REPOSITORY/keys/$VICTIM_ID victim-key.json
+json-set victim-key.json empty-host-key.json hostname=
+sha256 empty-host-key.json EMPTY_HOST_ID
+cp empty-host-key.json $RESTIC_REPOSITORY/keys/$EMPTY_HOST_ID
+rm $RESTIC_REPOSITORY/keys/$VICTIM_ID
 
 ! exec restic-age-key set --recipients-file=recipients.json
 stderr 'hostname is empty'
@@ -13,7 +19,8 @@ exec restic-age-key list
 stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw\s+alice'
 ! stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw\s+bob'
 
-exec bash restic-key-count.bash
+exec restic key list --no-cache --json
+json-len stdout
 stdout 2
 ! stderr .
 
@@ -24,20 +31,3 @@ secret
 [
     { "user": "bob", "pubkey": "age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw" }
 ]
-
--- empty-host.bash --
-set -euo pipefail
-for key_file in "$RESTIC_REPOSITORY"/keys/*; do
-    if [[ $(jq --raw-output '."age-pubkey" // empty' "$key_file") == "age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw" ]]; then
-        jq --compact-output --sort-keys '.hostname = ""' "$key_file" > "$WORK/empty-host-key.json"
-        key_id=$(sha256sum "$WORK/empty-host-key.json")
-        key_id=${key_id%% *}
-        mv "$WORK/empty-host-key.json" "$RESTIC_REPOSITORY/keys/$key_id"
-        rm "$key_file"
-        exit 0
-    fi
-done
-exit 1
-
--- restic-key-count.bash --
-restic key list --no-cache --json | jq length

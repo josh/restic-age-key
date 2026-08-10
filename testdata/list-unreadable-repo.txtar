@@ -3,14 +3,14 @@ env RESTIC_PASSWORD_FILE=$WORK/password.txt
 
 exec restic init
 
-exec chmod 000 $WORK/repo
+chmod 000 $WORK/repo
 
 ! exec restic-age-key list
 ! stdout .
 stderr 'unable to open config file'
 stderr 'permission denied'
 
-exec chmod 755 $WORK/repo
+chmod 755 $WORK/repo
 
 -- password.txt --
 secret

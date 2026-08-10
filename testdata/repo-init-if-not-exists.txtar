@@ -25,7 +25,7 @@ stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
 stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
 ! stdout 'age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr'
 
-exec cp $WORK/recipients2.json $WORK/recipients2-before.json
+cp $WORK/recipients2.json $WORK/recipients2-before.json
 ! exec restic-age-key repo-init --if-not-exists --repo $WORK/repo --recipients-file $WORK/recipients2.json --identity-file $WORK/key.txt --output $WORK/recipients2.json
 stderr '--output must not refer to the same file as --recipients-file'
 cmp $WORK/recipients2-before.json $WORK/recipients2.json
@@ -39,25 +39,44 @@ stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
 ! stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
 stdout 'age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr'
 
-exec cat $WORK/reconciled-keyids.txt
-stdout '^[a-f0-9]{8}\n[a-f0-9]{8}\n$'
+grep '^[a-f0-9]{8}\n[a-f0-9]{8}\n$' $WORK/reconciled-keyids.txt
 
 exec restic-age-key password --repo $WORK/repo --identity-file $WORK/key.txt --output $WORK/password.txt
-exec bash assert-keyids.bash $WORK/repo $WORK/password.txt $WORK/reconciled-keyids.txt
+exec restic key list --no-cache --json --repo $WORK/repo --password-file $WORK/password.txt
+json-get stdout id
+cut-chars stdout 8
+sort-lines stdout
+cmp stdout $WORK/reconciled-keyids.txt
 
 exec restic-age-key repo-init --if-not-exists --repo $WORK/repo --recipients-file $WORK/recipients2.json --identity-file $WORK/key.txt --output $WORK/repeat-keyids.txt
 stderr 'repository already initialized at'
 cmp $WORK/reconciled-keyids.txt $WORK/repeat-keyids.txt
-exec bash assert-keyids.bash $WORK/repo $WORK/password.txt $WORK/repeat-keyids.txt
+exec restic key list --no-cache --json --repo $WORK/repo --password-file $WORK/password.txt
+json-get stdout id
+cut-chars stdout 8
+sort-lines stdout
+cmp stdout $WORK/repeat-keyids.txt
 
-exec bash corrupt-replacement.bash $WORK/repo
+json-find $WORK/repo/keys age-pubkey=age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+capture-output STALE_ID
+cp $WORK/repo/keys/$STALE_ID stale-key.json
+json-set stale-key.json replacement-key.json hostname=new.local
+sha256 replacement-key.json REPLACEMENT_ID
+cp corrupt $WORK/repo/keys/$REPLACEMENT_ID
 exec restic-age-key repo-init --if-not-exists --repo $WORK/repo --recipients-file $WORK/recipients3.json --identity-file $WORK/key.txt --output $WORK/repaired-keyids.txt
 stderr 'repository already initialized at'
-exec bash assert-keyids.bash $WORK/repo $WORK/password.txt $WORK/repaired-keyids.txt
+exec restic key list --no-cache --json --repo $WORK/repo --password-file $WORK/password.txt
+json-get stdout id
+cut-chars stdout 8
+sort-lines stdout
+cmp stdout $WORK/repaired-keyids.txt
 
 exec restic-age-key list --repo $WORK/repo --identity-file $WORK/key.txt
 stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7\s+alice\s+new.local'
 stdout 'age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr\s+carol\s+carol.local'
+
+-- corrupt --
+corrupt
 
 -- key.txt --
 AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY
@@ -88,25 +107,3 @@ AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY
 
 -- empty.json --
 []
-
--- assert-keyids.bash --
-set -euo pipefail
-restic key list --repo "$1" --password-file "$2" --no-cache --json |
-    jq --raw-output '.[].id[0:8]' |
-    sort > "$WORK/repository-keyids.txt"
-sort "$3" > "$WORK/output-keyids.txt"
-cmp "$WORK/repository-keyids.txt" "$WORK/output-keyids.txt"
-
--- corrupt-replacement.bash --
-set -euo pipefail
-for key_file in "$1"/keys/*; do
-    if [[ $(jq --raw-output '."age-pubkey" // empty' "$key_file") == "age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7" ]]; then
-        replacement=$(jq --compact-output --sort-keys '.hostname = "new.local"' "$key_file")
-        printf '%s' "$replacement" > "$WORK/replacement-key.json"
-        replacement_id=$(sha256sum "$WORK/replacement-key.json")
-        replacement_id=${replacement_id%% *}
-        printf 'corrupt' > "$1/keys/$replacement_id"
-        exit 0
-    fi
-done
-exit 1

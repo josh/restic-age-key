@@ -14,7 +14,8 @@ stdout 'age15xz8e5kyjguheag9a99nmwfrf5z3wr9729x2nhdk8zdfcny7a4wqtyl0rn'
 stdout 'age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9\s+alice\s+old.local'
 stdout 'age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4'
 
-exec bash restic-key-count.bash
+exec restic key list --no-cache --json --password-file $WORK/password.txt
+json-len stdout
 stdout 4
 
 exec restic-age-key set --identity-file=$WORK/key.txt --recipients-file=recipients.json
@@ -29,7 +30,8 @@ stdout 'age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9\s+alice\s
 ! stdout 'age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9\s+carol\s+old.local'
 stdout 'age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4'
 
-exec bash restic-key-count.bash
+exec restic key list --no-cache --json --password-file $WORK/password.txt
+json-len stdout
 stdout 3
 
 -- password.txt --
@@ -44,9 +46,6 @@ AGE-SECRET-KEY-1VYLVW0ECH8CVFEKQUSDCSWR6URU6ZWVFH245PHW5TSSE9V676DTSFHL5E7
     { "user": "alice", "pubkey": "age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9" },
     { "host": "bob.local", "user": "bob", "pubkey": "age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4" }
 ]
-
--- restic-key-count.bash --
-restic key list --password-file=$WORK/password.txt --no-cache --json | jq length
 
 -- set-stderr.txt --
 Add key age17vcqt2rtn3eqqtud8448tqnev6utce8cz8ddwpl7yyxrfzpjuudq8eplr9 for alice@old.local

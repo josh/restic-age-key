@@ -4,19 +4,18 @@ env RESTIC_AGE_HOST=localhost
 
 exec restic init --password-file $WORK/password.txt
 
-exec bash restic-key-count.bash
+exec restic key list --no-cache --json --password-file password.txt
+json-len stdout
 stdout 1
 ! stderr .
 
-! exec restic-age-key add --timeout=5s --identity-command 'sleep 10' --recipient age1prqncjmv79use2pqj46hch93u48uk52utwgc903wnatekhgxt90q9udpwn
+! exec restic-age-key add --timeout=5s --identity-command 'hang 10' --recipient age1prqncjmv79use2pqj46hch93u48uk52utwgc903wnatekhgxt90q9udpwn
 cmp stderr restic-age-key-stderr.txt
 
-exec bash restic-key-count.bash
+exec restic key list --no-cache --json --password-file password.txt
+json-len stdout
 stdout 1
 ! stderr .
-
--- restic-key-count.bash --
-restic key list --password-file password.txt --no-cache --json | jq length
 
 -- password.txt --
 secret

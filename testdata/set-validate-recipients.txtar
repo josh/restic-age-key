@@ -19,7 +19,8 @@ stderr 'Fatal: Invalid recipients file: recipient pubkey is empty'
 exec restic-age-key list
 stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw\s+alice\s+alice.local'
 
-exec bash restic-key-count.bash
+exec restic key list --no-cache --json
+json-len stdout
 stdout 2
 ! stderr .
 
@@ -42,6 +43,3 @@ secret
 [
     { "host": "alice.local", "user": "alice", "pubkey": "" }
 ]
-
--- restic-key-count.bash --
-restic key list --no-cache --json | jq length
