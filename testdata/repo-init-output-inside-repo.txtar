@@ -1,0 +1,9 @@
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=alice.local
+
+! exec restic-age-key repo-init --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt --output $WORK/repo/config
+stderr '--output must not be inside the local repository'
+! exists $WORK/repo/config
+
+-- key.txt --
+AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY

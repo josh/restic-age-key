@@ -671,6 +671,9 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 			return fmt.Errorf("Fatal: Invalid recipients file: %w", err) //nolint:staticcheck
 		}
 	}
+	if err := validateRepoInitOutputPath(opts.repo, opts.output); err != nil {
+		return err
+	}
 
 	var inspectErr error
 	if opts.ifNotExists {
@@ -948,6 +951,67 @@ func validateOutputPaths(output string, inputs []outputInput) error {
 		}
 	}
 	return nil
+}
+
+func validateRepoInitOutputPath(repo, output string) error {
+	if output == "" {
+		return nil
+	}
+
+	loc, err := location.Parse(collectBackends(), repo)
+	if err != nil {
+		return nil
+	}
+	cfg, ok := loc.Config.(*local.Config)
+	if !ok {
+		return nil
+	}
+
+	repoPath, err := canonicalPath(cfg.Path)
+	if err != nil {
+		return fmt.Errorf("failed to resolve local repository path: %w", err)
+	}
+	outputPath, err := canonicalPath(output)
+	if err != nil {
+		return fmt.Errorf("failed to resolve --output path: %w", err)
+	}
+	rel, err := filepath.Rel(repoPath, outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to compare --output and local repository paths: %w", err)
+	}
+	if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+		return errors.New("--output must not be inside the local repository")
+	}
+	return nil
+}
+
+func canonicalPath(path string) (string, error) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	path = filepath.Clean(path)
+
+	var suffix []string
+	for {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err == nil {
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", err
+		}
+		suffix = append(suffix, filepath.Base(path))
+		path = parent
+	}
 }
 
 func sameFilePath(pathA, pathB string) (bool, error) {
