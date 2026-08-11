@@ -1185,14 +1185,14 @@ func resolveUpdatedSetRecipient(desired Recipient, existing storedRecipient) (Re
 	if desired.User == "" {
 		desired.User = existing.User
 	}
-	if desired.Host == existing.Host && desired.User == existing.User {
-		return desired, false, nil
-	}
 	if desired.Host == "" {
 		return Recipient{}, false, errors.New("hostname is empty")
 	}
 	if desired.User == "" {
 		return Recipient{}, false, errors.New("username is empty")
+	}
+	if desired.Host == existing.Host && desired.User == existing.User {
+		return desired, false, nil
 	}
 	return desired, true, nil
 }
