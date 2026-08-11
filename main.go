@@ -2049,6 +2049,9 @@ func createOrOpenBackend(ctx context.Context, opts options, create bool) (backen
 	}
 
 	cfg := loc.Config
+	if envCfg, ok := cfg.(backend.ApplyEnvironmenter); ok {
+		envCfg.ApplyEnvironment("")
+	}
 	if rcloneCfg, ok := cfg.(*rclone.Config); ok {
 		rcloneCfg.Program = opts.rcloneProgram
 	}

@@ -1,0 +1,6 @@
+env RESTIC_REST_USERNAME=environment-user
+env RESTIC_REST_PASSWORD=environment-password
+
+! exec restic-age-key list --repo rest:http://127.0.0.1:1/repo --password test-password
+stderr 'environment-user'
+! stderr 'environment-password'
