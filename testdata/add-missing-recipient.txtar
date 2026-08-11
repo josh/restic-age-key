@@ -11,4 +11,4 @@ cmp stderr restic-age-key-stderr.txt
 secret
 
 -- restic-age-key-stderr.txt --
-Fatal: Please specify recipient (-r or --recipient)
+Fatal: Please specify recipient (--recipient)

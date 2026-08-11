@@ -524,7 +524,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	}
 
 	if opts.recipient == "" {
-		return errors.New("Fatal: Please specify recipient (-r or --recipient)") //nolint:staticcheck
+		return errors.New("Fatal: Please specify recipient (--recipient)") //nolint:staticcheck
 	}
 	if repo.Key() == nil {
 		return errors.New("repo master key not loaded")
