@@ -1627,6 +1627,7 @@ type identityKeyCandidate struct {
 	id      restic.ID
 	pubkey  string
 	ageData []byte
+	data    []byte
 }
 
 func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Repository, opts options, preferredPubkeys map[string]Recipient) (string, restic.ID, error) {
@@ -1661,6 +1662,7 @@ func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Rep
 			id:      id,
 			pubkey:  key.AgePubkey,
 			ageData: key.AgeData,
+			data:    key.Data,
 		})
 		return nil
 	})
@@ -1677,10 +1679,31 @@ func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Rep
 		return candidates[i].id.String() < candidates[j].id.String()
 	})
 
+	var verifyErr error
 	for _, candidate := range candidates {
 		password, err := ageDecryptKey(ctx, opts.ageProgram, opts.identityFile, candidate.ageData)
 		if err == nil {
-			return password, candidate.id, nil
+			if len(candidate.data) < crypto.CiphertextLength(0) {
+				if verifyErr == nil {
+					verifyErr = fmt.Errorf("age key %s is incomplete", candidate.id.Str())
+				}
+				continue
+			}
+			_, openErr := repository.OpenKey(ctx, repo, candidate.id, password)
+			if openErr == nil {
+				return password, candidate.id, nil
+			}
+			if ctx.Err() != nil {
+				return "", restic.ID{}, fmt.Errorf("failed to verify key %s: %w", candidate.id.Str(), openErr)
+			}
+			if verifyErr == nil {
+				if errors.Is(openErr, crypto.ErrUnauthenticated) {
+					verifyErr = fmt.Errorf("decrypted password does not open key %s: %w", candidate.id.Str(), openErr)
+				} else {
+					verifyErr = fmt.Errorf("failed to verify key %s: %w", candidate.id.Str(), openErr)
+				}
+			}
+			continue
 		}
 		if strings.Contains(err.Error(), "no identity matched any of the recipients") {
 			continue
@@ -1690,6 +1713,9 @@ func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Rep
 		}
 	}
 
+	if verifyErr != nil {
+		return "", restic.ID{}, verifyErr
+	}
 	if keyErr != nil {
 		return "", restic.ID{}, keyErr
 	}
