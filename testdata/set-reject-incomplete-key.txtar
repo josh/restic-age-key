@@ -1,0 +1,30 @@
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+
+exec restic init
+exec restic-age-key add --recipient age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw
+
+json-find $RESTIC_REPOSITORY/keys age-pubkey=age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw
+capture-output AGE_KEY_ID
+cp $RESTIC_REPOSITORY/keys/$AGE_KEY_ID age-key.json
+json-del age-key.json incomplete-key.json age-data
+sha256 incomplete-key.json INCOMPLETE_ID
+cp incomplete-key.json $RESTIC_REPOSITORY/keys/$INCOMPLETE_ID
+rm $RESTIC_REPOSITORY/keys/$AGE_KEY_ID
+
+! exec restic-age-key set --recipients-file recipients.json
+stderr 'age key [a-f0-9]{8} is incomplete'
+! stderr 'Add key|Remove key'
+
+exec restic key list --no-cache --json
+json-len stdout
+stdout 2
+! stderr .
+
+-- password.txt --
+secret
+
+-- recipients.json --
+[
+    { "pubkey": "age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw" }
+]
