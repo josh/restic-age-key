@@ -1217,20 +1217,24 @@ func inspectSetKeys(ctx context.Context, repo *repository.Repository) (setKeyInv
 		if err := json.Unmarshal(data, &key); err != nil {
 			return fmt.Errorf("failed to parse key %s: %w", id.Str(), err)
 		}
-		if key.AgePubkey != "" {
-			if len(key.AgeData) == 0 || len(key.Data) == 0 {
+		if key.AgePubkey == "" {
+			if len(key.AgeData) != 0 {
 				return fmt.Errorf("age key %s is incomplete", id.Str())
 			}
-			inventory.recipients[key.AgePubkey] = append(inventory.recipients[key.AgePubkey], storedRecipient{
-				Recipient: Recipient{
-					ID:     id,
-					Pubkey: key.AgePubkey,
-					Host:   key.Hostname,
-					User:   key.Username,
-				},
-				raw: data,
-			})
+			return nil
 		}
+		if len(key.AgeData) == 0 || len(key.Data) < crypto.CiphertextLength(0) {
+			return fmt.Errorf("age key %s is incomplete", id.Str())
+		}
+		inventory.recipients[key.AgePubkey] = append(inventory.recipients[key.AgePubkey], storedRecipient{
+			Recipient: Recipient{
+				ID:     id,
+				Pubkey: key.AgePubkey,
+				Host:   key.Hostname,
+				User:   key.Username,
+			},
+			raw: data,
+		})
 		return nil
 	})
 	if err != nil {
@@ -1994,9 +1998,12 @@ func inspectRepository(ctx context.Context, opts options, loadAgeKeys bool) (rep
 			return fmt.Errorf("failed to parse key %s: %w", id.Str(), err)
 		}
 		if key.AgePubkey == "" {
+			if len(key.AgeData) != 0 {
+				return fmt.Errorf("age key %s is incomplete", id.Str())
+			}
 			return nil
 		}
-		if len(key.AgeData) == 0 || len(key.Data) == 0 {
+		if len(key.AgeData) == 0 || len(key.Data) < crypto.CiphertextLength(0) {
 			return fmt.Errorf("age key %s is incomplete", id.Str())
 		}
 

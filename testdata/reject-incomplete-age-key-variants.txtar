@@ -1,0 +1,54 @@
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+
+exec restic init
+exec restic-age-key add --recipient age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4
+exec restic-age-key add --recipient age1ljvnfh04dyagjkpt6z8zrgw3vlthhy4g0vtug709gmh764rj2vgqdx84qr
+
+json-find $RESTIC_REPOSITORY/keys age-pubkey=age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4
+capture-output AGE_KEY_ID
+cp $RESTIC_REPOSITORY/keys/$AGE_KEY_ID age-key.json
+json-set age-key.json truncated-key.json data=QUFBQQ==
+sha256 truncated-key.json TRUNCATED_ID
+cp truncated-key.json $RESTIC_REPOSITORY/keys/$TRUNCATED_ID
+rm $RESTIC_REPOSITORY/keys/$AGE_KEY_ID
+env RESTIC_PASSWORD_FILE=
+
+! exec restic-age-key set --identity-file key-b.txt --recipients-file recipients.json
+stderr 'age key [a-f0-9]{8} is incomplete'
+! stderr 'Add key|Remove key'
+
+! exec restic-age-key repo-init --if-not-exists --recipient age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4
+stderr 'age key [a-f0-9]{8} is incomplete'
+! stderr 'repository already initialized'
+
+rm $RESTIC_REPOSITORY/keys/$TRUNCATED_ID
+json-del age-key.json orphan-age-data.json age-pubkey
+sha256 orphan-age-data.json ORPHAN_ID
+cp orphan-age-data.json $RESTIC_REPOSITORY/keys/$ORPHAN_ID
+
+! exec restic-age-key set --identity-file key-b.txt --recipients-file remaining.json
+stderr 'age key [a-f0-9]{8} is incomplete'
+! stderr 'Add key|Remove key'
+
+exec restic key list --no-cache --json --password-file password.txt
+json-len stdout
+stdout 3
+! stderr .
+
+-- password.txt --
+secret
+
+-- recipients.json --
+[
+    { "pubkey": "age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4" },
+    { "pubkey": "age1ljvnfh04dyagjkpt6z8zrgw3vlthhy4g0vtug709gmh764rj2vgqdx84qr" }
+]
+
+-- remaining.json --
+[
+    { "pubkey": "age1ljvnfh04dyagjkpt6z8zrgw3vlthhy4g0vtug709gmh764rj2vgqdx84qr" }
+]
+
+-- key-b.txt --
+AGE-SECRET-KEY-1GSCR445N7JFSESARCN42GDQ4LLD8TJHF8MQW9594ZNKJXXSLJ2RQ5EM8VP
