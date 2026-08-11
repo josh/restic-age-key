@@ -389,7 +389,12 @@ type preparedAgeKey struct {
 	password string
 }
 
-func prepareAgeKey(ctx context.Context, ageProgram, recipient, host, user string, master crypto.Key) (preparedAgeKey, error) {
+type encryptedAgePassword struct {
+	password string
+	data     []byte
+}
+
+func prepareAgeKey(recipient, host, user string, master crypto.Key, encrypted encryptedAgePassword) (preparedAgeKey, error) {
 	params, err := crypto.Calibrate(500*time.Millisecond, 60)
 	if err != nil {
 		return preparedAgeKey{}, fmt.Errorf("failed to calibrate crypto parameters: %w", err)
@@ -418,15 +423,10 @@ func prepareAgeKey(ctx context.Context, ageProgram, recipient, host, user string
 		return preparedAgeKey{}, fmt.Errorf("failed to generate new salt: %w", err)
 	}
 
-	password, ageData, err := ageEncryptRandomKey(ctx, ageProgram, recipient)
-	if err != nil {
-		return preparedAgeKey{}, err
-	}
-
 	newkey.AgePubkey = recipient
-	newkey.AgeData = ageData
+	newkey.AgeData = encrypted.data
 
-	userKey, err := crypto.KDF(params, newkey.Salt, password)
+	userKey, err := crypto.KDF(params, newkey.Salt, encrypted.password)
 	if err != nil {
 		return preparedAgeKey{}, fmt.Errorf("failed to generate key from password: %w", err)
 	}
@@ -450,7 +450,7 @@ func prepareAgeKey(ctx context.Context, ageProgram, recipient, host, user string
 	return preparedAgeKey{
 		id:       restic.Hash(buf),
 		raw:      buf,
-		password: password,
+		password: encrypted.password,
 	}, nil
 }
 
@@ -489,12 +489,12 @@ func savePreparedAgeKey(ctx context.Context, repo *repository.Repository, be bac
 	return true, nil
 }
 
-func buildAndSaveAgeKey(ctx context.Context, ageProgram, recipient, host, user string, repo *repository.Repository, be backend.Backend, dryRun bool) (restic.ID, string, error) {
+func buildAndSaveAgeKey(ctx context.Context, recipient, host, user string, encrypted encryptedAgePassword, repo *repository.Repository, be backend.Backend, dryRun bool) (restic.ID, string, error) {
 	if repo.Key() == nil {
 		return restic.ID{}, "", errors.New("repo master key not loaded")
 	}
 
-	key, err := prepareAgeKey(ctx, ageProgram, recipient, host, user, *repo.Key())
+	key, err := prepareAgeKey(recipient, host, user, *repo.Key(), encrypted)
 	if err != nil {
 		return restic.ID{}, "", err
 	}
@@ -530,9 +530,20 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 		return errors.New("repo master key not loaded")
 	}
 
+	if opts.host == "" {
+		return errors.New("hostname is empty")
+	}
+	if opts.user == "" {
+		return errors.New("username is empty")
+	}
+
 	expectedMaster := *repo.Key()
 	originalKeyID := repo.KeyID()
-	key, err := prepareAgeKey(ctx, opts.ageProgram, opts.recipient, opts.host, opts.user, expectedMaster)
+	password, ageData, err := ageEncryptRandomKey(ctx, opts.ageProgram, opts.recipient)
+	if err != nil {
+		return err
+	}
+	key, err := prepareAgeKey(opts.recipient, opts.host, opts.user, expectedMaster, encryptedAgePassword{password: password, data: ageData})
 	if err != nil {
 		return err
 	}
@@ -701,6 +712,7 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 	if opts.recipientsFile == "" {
 		preflight = []Recipient{{Pubkey: opts.recipient}}
 	}
+	encryptedPasswords := make(map[string]encryptedAgePassword, len(preflight))
 	for _, recipient := range preflight {
 		host := recipient.Host
 		if host == "" {
@@ -718,9 +730,11 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 			return errors.New("username is empty")
 		}
 
-		if _, _, err := ageEncryptRandomKey(ctx, opts.ageProgram, recipient.Pubkey); err != nil {
+		password, data, err := ageEncryptRandomKey(ctx, opts.ageProgram, recipient.Pubkey)
+		if err != nil {
 			return fmt.Errorf("invalid age recipient %s: %w", recipient.Pubkey, err)
 		}
+		encryptedPasswords[recipient.Pubkey] = encryptedAgePassword{password: password, data: data}
 	}
 
 	if inspectErr != nil {
@@ -762,14 +776,22 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 				user = opts.user
 			}
 
-			ageKeyID, _, err := buildAndSaveAgeKey(ctx, opts.ageProgram, recipient.Pubkey, host, user, repo, be, false)
+			encrypted, ok := encryptedPasswords[recipient.Pubkey]
+			if !ok {
+				return fmt.Errorf("no validated age encryption for recipient %s", recipient.Pubkey)
+			}
+			ageKeyID, _, err := buildAndSaveAgeKey(ctx, recipient.Pubkey, host, user, encrypted, repo, be, false)
 			if err != nil {
 				return fmt.Errorf("failed to create age key for %s: %w", recipient.Pubkey, err)
 			}
 			ageKeyIDs = append(ageKeyIDs, ageKeyID)
 		}
 	} else {
-		ageKeyID, _, err := buildAndSaveAgeKey(ctx, opts.ageProgram, opts.recipient, opts.host, opts.user, repo, be, false)
+		encrypted, ok := encryptedPasswords[opts.recipient]
+		if !ok {
+			return fmt.Errorf("no validated age encryption for recipient %s", opts.recipient)
+		}
+		ageKeyID, _, err := buildAndSaveAgeKey(ctx, opts.recipient, opts.host, opts.user, encrypted, repo, be, false)
 		if err != nil {
 			return fmt.Errorf("failed to create age key: %w", err)
 		}
@@ -1322,7 +1344,12 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 				continue
 			}
 
-			key, err := prepareAgeKey(ctx, opts.ageProgram, recipient.Pubkey, recipient.Host, recipient.User, expectedMaster)
+			password, ageData, err := ageEncryptRandomKey(ctx, opts.ageProgram, recipient.Pubkey)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to add key %s: %v\n", recipient.Pubkey, err)
+				return errors.New("failed to set keys")
+			}
+			key, err := prepareAgeKey(recipient.Pubkey, recipient.Host, recipient.User, expectedMaster, encryptedAgePassword{password: password, data: ageData})
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "failed to add key %s: %v\n", recipient.Pubkey, err)
 				return errors.New("failed to set keys")
