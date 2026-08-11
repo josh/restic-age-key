@@ -11,7 +11,7 @@ List keys:
 ```sh
 restic-age-key list \
   --repo /tmp/restic-repo \
-  --identity key.txt
+  --identity-file key.txt
 
  ID        Age Pubkey  User  Host  Created
 ------------------------------------------------------
@@ -29,7 +29,7 @@ Add first age key using existing password:
 restic-age-key add \
   --repo /tmp/restic-repo \
   --password secret \
-  --pubkey age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
+  --recipient age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
 ```
 
 Add subsequent age keys using another age key:
@@ -37,8 +37,8 @@ Add subsequent age keys using another age key:
 ```sh
 restic-age-key add \
   --repo /tmp/restic-repo \
-  --identity key.txt \
-  --pubkey age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
+  --identity-file key.txt \
+  --recipient age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
 ```
 
 ### `set`
@@ -58,7 +58,7 @@ This can be used as your `RESTIC_PASSWORD_COMMAND` value.
 ```sh
 restic-age-key password \
   --repo /tmp/restic-repo \
-  --identity key.txt
+  --identity-file key.txt
 ```
 
 `restic-age-key` uses the same standard environment variables which allows you to configure your backup scripts using something like:
