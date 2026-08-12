@@ -74,6 +74,11 @@ restic backup
 The repository can also be given with `-r`, or read from a file with
 `--repository-file` / `RESTIC_REPOSITORY_FILE`, just like restic.
 
+Backend configuration is passed through the same way as restic: `-o`/`--option` for
+extended backend options, `--key-hint`, `--cacert`, `--tls-client-cert`,
+`--insecure-tls`, `--http-user-agent`, `--stuck-request-timeout`, and
+`--limit-upload`/`--limit-download`.
+
 Should you need to recover your password without `restic-age-key`, you can use a few standard unix tools.
 
 ```sh

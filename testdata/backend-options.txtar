@@ -1,0 +1,67 @@
+# Extended backend options and --key-hint behave as they do in restic.
+
+env RESTIC_REPOSITORY=$WORK/repo
+exec restic init --password-file $WORK/password.txt
+exec restic-age-key add --password-file $WORK/password.txt --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+
+# -o is accepted and applied to the backend configuration.
+exec restic key list -o local.connections=1 --password-file $WORK/password.txt
+exec restic-age-key list -o local.connections=1 --password-file $WORK/password.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
+
+# An option naming an unknown field of a known backend is rejected, not ignored.
+! exec restic key list -o local.nonsense=1 --password-file $WORK/password.txt
+! exec restic-age-key list -o local.nonsense=1 --password-file $WORK/password.txt
+! stdout .
+stderr 'nonsense'
+
+# An option for another backend's namespace is ignored, matching restic.
+exec restic key list -o s3.connections=1 --password-file $WORK/password.txt
+exec restic-age-key list -o s3.connections=1 --password-file $WORK/password.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
+
+# A repeated key with conflicting values is rejected.
+! exec restic key list -o local.connections=1 -o local.connections=2 --password-file $WORK/password.txt
+! exec restic-age-key list -o local.connections=1 -o local.connections=2 --password-file $WORK/password.txt
+! stdout .
+stderr 'present more than once'
+
+# --key-hint accepts the id of an existing key.
+json-find $WORK/repo/keys age-pubkey=age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+capture-output AGE_KEY_ID
+exec restic-age-key list --key-hint $AGE_KEY_ID --identity-file $WORK/key.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
+
+# When one identity unlocks several age keys, --key-hint picks which one is
+# opened rather than leaving it to the default ordering.
+exec restic-age-key add --password-file $WORK/password.txt --recipient age15xz8e5kyjguheag9a99nmwfrf5z3wr9729x2nhdk8zdfcny7a4wqtyl0rn
+exec restic-age-key add --password-file $WORK/password.txt --recipient age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4
+
+json-find $WORK/repo/keys age-pubkey=age15xz8e5kyjguheag9a99nmwfrf5z3wr9729x2nhdk8zdfcny7a4wqtyl0rn
+capture-output FIRST_ID
+json-find $WORK/repo/keys age-pubkey=age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4
+capture-output SECOND_ID
+
+exec restic-age-key list --identity-file $WORK/pair.txt --key-hint $FIRST_ID
+stdout '\*[a-f0-9]{8}\s+age15xz8e5kyjguheag9a99nmwfrf5z3wr9729x2nhdk8zdfcny7a4wqtyl0rn'
+exec restic-age-key list --identity-file $WORK/pair.txt --key-hint $SECOND_ID
+stdout '\*[a-f0-9]{8}\s+age1yyc2s8dmtv4ljvsfjd8lmqgua97fwz20t0t8wgq02cjz4va86gxqcc9lw4'
+
+# An unknown hint falls back to the other keys, exactly as restic does.
+exec restic key list --key-hint 0000000000000000000000000000000000000000000000000000000000000000 --password-file $WORK/password.txt
+exec restic-age-key list --key-hint 0000000000000000000000000000000000000000000000000000000000000000 --password-file $WORK/password.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
+
+# The transport and rate limit flags are accepted on a local repository.
+exec restic-age-key list --limit-upload 1024 --limit-download 1024 --stuck-request-timeout 30s --insecure-tls --password-file $WORK/password.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
+
+-- password.txt --
+secret
+
+-- pair.txt --
+AGE-SECRET-KEY-1KEA8L9NDXW4GWW946TZ5LJVGYRGHL4JQ3ZVMX4HRAE3LWYTAU8GQAKTGZ9
+AGE-SECRET-KEY-1VYLVW0ECH8CVFEKQUSDCSWR6URU6ZWVFH245PHW5TSSE9V676DTSFHL5E7
+
+-- key.txt --
+AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY
