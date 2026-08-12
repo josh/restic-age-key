@@ -2,7 +2,7 @@ env RESTIC_AGE_USER=alice
 env RESTIC_AGE_HOST=alice.local
 
 exec restic-age-key repo-init --if-not-exists --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt --output $WORK/initial-keyid.txt
-stderr 'created restic repository [a-f0-9]{8} at'
+stderr 'created restic repository [a-f0-9]{10} at'
 ! stdout .
 
 exec restic-age-key repo-init --if-not-exists --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt --output $WORK/repeat-keyid.txt

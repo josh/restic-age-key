@@ -2,7 +2,7 @@ env RESTIC_AGE_USER=default
 env RESTIC_AGE_HOST=default.local
 
 exec restic-age-key repo-init --repo $WORK/repo --recipients-file $WORK/recipients.json --identity-file $WORK/key1.txt --output $WORK/keyids.txt
-stderr 'created restic repository [a-f0-9]{8} at'
+stderr 'created restic repository [a-f0-9]{10} at'
 ! stdout .
 
 grep '^[a-f0-9]{8}\n[a-f0-9]{8}\n$' $WORK/keyids.txt
