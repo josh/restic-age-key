@@ -1,0 +1,36 @@
+# Exit codes follow restic: 10 for a missing repository, 12 for a wrong
+# password, and 1 for everything else.
+
+env RESTIC_REPOSITORY=$WORK/repo
+exec restic init --password-file $WORK/password.txt
+exec restic-age-key add --password-file $WORK/password.txt --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+
+exit-status ok.txt restic-age-key list --password-file $WORK/password.txt
+cmp ok.txt zero.txt
+
+exit-status missing.txt restic-age-key list --repo $WORK/not-a-repo --password-file $WORK/password.txt
+stderr 'repository does not exist'
+cmp missing.txt ten.txt
+
+exit-status wrong.txt restic-age-key list --password-file $WORK/wrong-password.txt
+stderr 'wrong password or no key found'
+cmp wrong.txt twelve.txt
+
+exit-status usage.txt restic-age-key add --password-file $WORK/password.txt
+stderr 'Fatal: Please specify recipient'
+cmp usage.txt one.txt
+
+-- password.txt --
+secret
+
+-- wrong-password.txt --
+not-the-password
+
+-- zero.txt --
+0
+-- one.txt --
+1
+-- ten.txt --
+10
+-- twelve.txt --
+12

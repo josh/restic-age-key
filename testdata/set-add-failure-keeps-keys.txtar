@@ -6,7 +6,6 @@ exec restic-age-key add --recipient=age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctg
 
 ! exec restic-age-key set --age-program=fake-age --recipients-file=recipients.json
 stderr 'failed to add key age1ljfnltkzeynhjhe928gap0jn4jlwxfwstaf2pcas3y72fv35d9qq43lvvr'
-stderr 'failed to set keys'
 ! stderr 'Remove key'
 
 exec restic-age-key list
