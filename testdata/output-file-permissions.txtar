@@ -1,0 +1,89 @@
+# --output follows age: the file is written in place, so symlinks and devices
+# still work, and new files are created owner-only like age-keygen does. The
+# mode passed to OpenFile only applies on creation, so an existing file keeps
+# whatever permissions its owner chose; age-keygen warns in that situation
+# rather than changing them, and so do we.
+
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+exec restic init
+exec restic-age-key add --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+
+# A new file is created owner-only, with nothing to warn about.
+exec restic-age-key password --identity-file $WORK/key.txt --output $WORK/fresh.txt
+mode $WORK/fresh.txt
+stdout '^600$'
+! stderr 'world-readable'
+grep '^[a-f0-9]{64}$' $WORK/fresh.txt
+
+exec restic-age-key add --recipient age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw --output $WORK/fresh-id.txt
+mode $WORK/fresh-id.txt
+stdout '^600$'
+grep '^[a-f0-9]{8}$' $WORK/fresh-id.txt
+
+exec restic-age-key repo-init --repo $WORK/repo2 --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --output $WORK/fresh-init.txt
+mode $WORK/fresh-init.txt
+stdout '^600$'
+grep '^[a-f0-9]{8}$' $WORK/fresh-init.txt
+
+# Writing a password into an already world-readable file is reported, and the
+# permissions its owner chose are left alone.
+exec touch $WORK/exposed.txt
+chmod 0644 $WORK/exposed.txt
+exec restic-age-key password --identity-file $WORK/key.txt --output $WORK/exposed.txt
+stderr 'writing password to a world-readable file'
+mode $WORK/exposed.txt
+stdout '^644$'
+grep '^[a-f0-9]{64}$' $WORK/exposed.txt
+
+# A group-readable file is not world-readable, so it draws no warning. This is
+# the same test age-keygen applies.
+exec touch $WORK/group.txt
+chmod 0640 $WORK/group.txt
+exec restic-age-key password --identity-file $WORK/key.txt --output $WORK/group.txt
+! stderr 'world-readable'
+mode $WORK/group.txt
+stdout '^640$'
+
+# A symlink is written through rather than replaced, as age does.
+symlink $WORK/link.txt -> $WORK/target.txt
+exec touch $WORK/target.txt
+exec restic-age-key password --identity-file $WORK/key.txt --output $WORK/link.txt
+exists $WORK/link.txt
+grep '^[a-f0-9]{64}$' $WORK/target.txt
+
+# Writing to a device works, which an atomic replace could not do. repo-init
+# used to replace its output file, so it could not do this either.
+exec restic-age-key password --identity-file $WORK/key.txt --output /dev/stdout
+stdout '^[a-f0-9]{64}$'
+! stderr 'world-readable'
+
+exec restic-age-key repo-init --repo $WORK/repo3 --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --output /dev/stdout
+stdout '^[a-f0-9]{8}$'
+
+# repo-init reports the same way when its destination is world-readable.
+exec touch $WORK/exposed-init.txt
+chmod 0644 $WORK/exposed-init.txt
+exec restic-age-key repo-init --repo $WORK/repo4 --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --output $WORK/exposed-init.txt
+stderr 'writing key ids to a world-readable file'
+mode $WORK/exposed-init.txt
+stdout '^644$'
+grep '^[a-f0-9]{8}$' $WORK/exposed-init.txt
+
+# A basename at the filesystem's per-component limit still works. Writing via a
+# temporary file named after the destination would exceed the limit here.
+exec restic-age-key password --identity-file $WORK/key.txt --output $WORK/nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn
+mode $WORK/nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn
+stdout '^600$'
+grep '^[a-f0-9]{64}$' $WORK/nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn
+
+# An unwritable destination is reported and creates nothing.
+! exec restic-age-key password --identity-file $WORK/key.txt --output $WORK/missing-dir/pw.txt
+! exists $WORK/missing-dir/pw.txt
+stderr 'failed to create output file'
+
+-- password.txt --
+secret
+
+-- key.txt --
+AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY
