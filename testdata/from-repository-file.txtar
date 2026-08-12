@@ -1,0 +1,64 @@
+# A source repository configured for restic copy via --from-repository-file or
+# RESTIC_FROM_REPOSITORY_FILE resolves here too.
+
+env RESTIC_REPOSITORY=$WORK/repo
+exec restic init --password-file $WORK/password.txt
+exec restic-age-key add --password-file $WORK/password.txt --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+env RESTIC_REPOSITORY=
+
+# restic accepts the same flag on its copy command.
+exec restic copy --help
+stdout 'from-repository-file'
+
+exec restic-age-key from-password --from-repository-file $WORK/fromfile.txt --identity-file $WORK/key.txt
+stdout '^[a-f0-9]{64}$'
+
+env RESTIC_FROM_REPOSITORY_FILE=$WORK/fromfile.txt
+exec restic-age-key from-password --identity-file $WORK/key.txt
+stdout '^[a-f0-9]{64}$'
+env RESTIC_FROM_REPOSITORY_FILE=
+
+# --from-repo still works on its own.
+exec restic-age-key from-password --from-repo $WORK/repo --identity-file $WORK/key.txt
+stdout '^[a-f0-9]{64}$'
+
+# Both locations together is rejected, with restic's wording.
+! exec restic-age-key from-password --from-repo $WORK/repo --from-repository-file $WORK/fromfile.txt --identity-file $WORK/key.txt
+! stdout .
+cmp stderr both-stderr.txt
+
+# A missing source repository file is reported by name.
+! exec restic-age-key from-password --from-repository-file $WORK/absent.txt --identity-file $WORK/key.txt
+! stdout .
+cmpenv stderr absent-stderr.txt
+
+# An --output alias names the flag the user actually supplied, not the
+# --repository-file flag that from-password does not accept.
+cp $WORK/fromfile.txt $WORK/fromfile-before.txt
+! exec restic-age-key from-password --from-repository-file $WORK/fromfile.txt --identity-file $WORK/key.txt --output $WORK/fromfile.txt
+! stdout .
+stderr 'output must not refer to the same file as --from-repository-file'
+cmp $WORK/fromfile.txt $WORK/fromfile-before.txt
+
+! exec restic-age-key from-password --from-repository-file $WORK/fromfile.txt --identity-file $WORK/key.txt --output $WORK/fromfile.txt
+! stderr 'same file as --repository-file$'
+
+# The plain repository-file flag keeps its own name.
+env RESTIC_FROM_REPOSITORY_FILE=$WORK/fromfile.txt
+! exec restic-age-key password --repository-file $WORK/fromfile.txt --identity-file $WORK/key.txt --output $WORK/fromfile.txt
+stderr 'output must not refer to the same file as --repository-file'
+env RESTIC_FROM_REPOSITORY_FILE=
+
+-- fromfile.txt --
+repo
+
+-- password.txt --
+secret
+
+-- key.txt --
+AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY
+
+-- both-stderr.txt --
+Fatal: Options --from-repo and --from-repository-file are mutually exclusive, please specify only one
+-- absent-stderr.txt --
+Fatal: $WORK/absent.txt does not exist

@@ -49,53 +49,57 @@ var (
 var errNoRepository = errors.New("repository does not exist")
 
 type options struct {
-	ageProgram        string
-	rcloneProgram     string
-	repo              string
-	repositoryFile    string
-	repoResolved      bool
-	fromRepo          string
-	password          string
-	passwordEnv       string
-	passwordFile      string
-	passwordCommand   string
-	identityFile      string
-	identityCommand   string
-	recipient         string
-	recipientsFile    string
-	host              string
-	user              string
-	output            string
-	timeout           time.Duration
-	retryLock         time.Duration
-	keyHint           string
-	extended          []string
-	transport         backend.TransportOptions
-	limits            limiter.Limits
-	dryRun            bool
-	json              bool
-	chunkerPolynomial string
-	ifNotExists       bool
+	ageProgram         string
+	rcloneProgram      string
+	repo               string
+	repositoryFile     string
+	repoResolved       bool
+	fromRepo           string
+	fromRepositoryFile string
+	repositoryFileFlag string
+	password           string
+	passwordEnv        string
+	passwordFile       string
+	passwordCommand    string
+	identityFile       string
+	identityCommand    string
+	recipient          string
+	recipientsFile     string
+	host               string
+	user               string
+	output             string
+	timeout            time.Duration
+	retryLock          time.Duration
+	keyHint            string
+	extended           []string
+	transport          backend.TransportOptions
+	limits             limiter.Limits
+	dryRun             bool
+	json               bool
+	chunkerPolynomial  string
+	ifNotExists        bool
 }
 
 func newRootCommand() *cobra.Command {
 	options := options{
-		ageProgram:        AgeProgram,
-		rcloneProgram:     RcloneProgram,
-		repo:              os.Getenv("RESTIC_REPOSITORY"),
-		repositoryFile:    os.Getenv("RESTIC_REPOSITORY_FILE"),
-		fromRepo:          os.Getenv("RESTIC_FROM_REPOSITORY"),
-		passwordEnv:       os.Getenv("RESTIC_PASSWORD"),
-		passwordFile:      os.Getenv("RESTIC_PASSWORD_FILE"),
-		passwordCommand:   os.Getenv("RESTIC_PASSWORD_COMMAND"),
-		identityFile:      os.Getenv("RESTIC_AGE_IDENTITY_FILE"),
-		identityCommand:   os.Getenv("RESTIC_AGE_IDENTITY_COMMAND"),
-		recipient:         os.Getenv("RESTIC_AGE_RECIPIENT"),
-		recipientsFile:    os.Getenv("RESTIC_AGE_RECIPIENTS_FILE"),
-		user:              os.Getenv("RESTIC_AGE_USER"),
-		host:              os.Getenv("RESTIC_AGE_HOST"),
-		chunkerPolynomial: os.Getenv("RESTIC_AGE_CHUNKER_POLYNOMIAL"),
-		keyHint:           os.Getenv("RESTIC_KEY_HINT"),
+		ageProgram:         AgeProgram,
+		rcloneProgram:      RcloneProgram,
+		repo:               os.Getenv("RESTIC_REPOSITORY"),
+		repositoryFile:     os.Getenv("RESTIC_REPOSITORY_FILE"),
+		fromRepo:           os.Getenv("RESTIC_FROM_REPOSITORY"),
+		fromRepositoryFile: os.Getenv("RESTIC_FROM_REPOSITORY_FILE"),
+		repositoryFileFlag: "--repository-file",
+		passwordEnv:        os.Getenv("RESTIC_PASSWORD"),
+		passwordFile:       os.Getenv("RESTIC_PASSWORD_FILE"),
+		passwordCommand:    os.Getenv("RESTIC_PASSWORD_COMMAND"),
+		identityFile:       os.Getenv("RESTIC_AGE_IDENTITY_FILE"),
+		identityCommand:    os.Getenv("RESTIC_AGE_IDENTITY_COMMAND"),
+		recipient:          os.Getenv("RESTIC_AGE_RECIPIENT"),
+		recipientsFile:     os.Getenv("RESTIC_AGE_RECIPIENTS_FILE"),
+		user:               os.Getenv("RESTIC_AGE_USER"),
+		host:               os.Getenv("RESTIC_AGE_HOST"),
+		chunkerPolynomial:  os.Getenv("RESTIC_AGE_CHUNKER_POLYNOMIAL"),
+		keyHint:            os.Getenv("RESTIC_KEY_HINT"),
 	}
 
 	options.transport.TLSClientCertKeyFilename = os.Getenv("RESTIC_TLS_CLIENT_CERT")
@@ -294,16 +298,15 @@ Exit status is 12 if the password is incorrect.
 		DisableAutoGenTag: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCommand(cmd, args, options.timeout, func(ctx context.Context) error {
-				if options.fromRepo == "" {
-					return errors.Fatal("Please specify repository location (--from-repo or RESTIC_FROM_REPOSITORY)")
+				if err := resolveFromRepo(&options); err != nil {
+					return err
 				}
-				options.repo = options.fromRepo
-				options.repoResolved = true
 				return runKeyPassword(ctx, options)
 			})
 		},
 	}
 	fromPasswordCommand.Flags().StringVar(&options.fromRepo, "from-repo", options.fromRepo, "restic repository location (env: RESTIC_FROM_REPOSITORY)")
+	fromPasswordCommand.Flags().StringVar(&options.fromRepositoryFile, "from-repository-file", options.fromRepositoryFile, "file from which to read the source repository location (env: RESTIC_FROM_REPOSITORY_FILE)")
 	fromPasswordCommand.Flags().StringVar(&options.output, "output", "", "output file to write password to")
 
 	repoInitCommand := &cobra.Command{
@@ -666,7 +669,7 @@ func runKeyAdd(ctx context.Context, opts options) error {
 
 	if err := validateOutputPaths(opts.output, []outputInput{
 		{flag: "--identity-file", path: opts.identityFile},
-		{flag: "--repository-file", path: opts.repositoryFile},
+		{flag: opts.repositoryFileFlag, path: opts.repositoryFile},
 		{flag: "--password-file", path: opts.passwordFile},
 	}); err != nil {
 		return err
@@ -757,7 +760,7 @@ func runKeyPassword(ctx context.Context, opts options) error {
 
 	if err := validateOutputPaths(opts.output, []outputInput{
 		{flag: "--identity-file", path: opts.identityFile},
-		{flag: "--repository-file", path: opts.repositoryFile},
+		{flag: opts.repositoryFileFlag, path: opts.repositoryFile},
 	}); err != nil {
 		return err
 	}
@@ -802,7 +805,7 @@ func runRepoInit(ctx context.Context, opts options) error {
 	}
 	if err := validateOutputPaths(opts.output, []outputInput{
 		{flag: "--identity-file", path: opts.identityFile},
-		{flag: "--repository-file", path: opts.repositoryFile},
+		{flag: opts.repositoryFileFlag, path: opts.repositoryFile},
 		{flag: "--recipients-file", path: opts.recipientsFile},
 		{flag: "--password-file", path: opts.passwordFile},
 	}); err != nil {
@@ -2294,6 +2297,23 @@ func inspectRepository(ctx context.Context, opts options, loadAgeKeys bool) (rep
 
 // resolveRepo mirrors restic's handling of -r and --repository-file, so a
 // repository configured for restic works here without change.
+// resolveFromRepo mirrors restic's source-repository handling, so a repository
+// configured for restic copy resolves the same way here.
+func resolveFromRepo(opts *options) error {
+	if opts.fromRepo == "" && opts.fromRepositoryFile == "" {
+		return errors.Fatal("Please specify a source repository location (--from-repo or --from-repository-file)")
+	}
+	if opts.fromRepo != "" && opts.fromRepositoryFile != "" {
+		return errors.Fatal("Options --from-repo and --from-repository-file are mutually exclusive, please specify only one")
+	}
+
+	opts.repo = opts.fromRepo
+	opts.repositoryFile = opts.fromRepositoryFile
+	opts.repositoryFileFlag = "--from-repository-file"
+	opts.repoResolved = false
+	return resolveRepo(opts)
+}
+
 func resolveRepo(opts *options) error {
 	if opts.repoResolved {
 		return nil
