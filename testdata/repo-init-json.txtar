@@ -1,0 +1,124 @@
+# repo-init --json emits restic init's schema, extended with the age key IDs.
+
+exec restic init --repo $WORK/restic-repo --insecure-no-password --json
+stdout '"message_type":"initialized"'
+stdout '"id":'
+stdout '"repository":'
+
+exec restic-age-key repo-init --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --json
+! stderr .
+stdout '"message_type":"initialized"'
+stdout '"id":"[a-f0-9]{64}"'
+stdout '"repository":'
+stdout '"ageKeyIds":\["[a-f0-9]{64}"\]'
+
+# JSON replaces the human banner rather than accompanying it.
+! stdout 'created restic repository'
+! stderr 'Please note that knowledge'
+
+json-get stdout message_type
+stdout initialized
+
+# The repository really was created and is usable through the age key.
+exec restic-age-key password --repo $WORK/repo --identity-file $WORK/key.txt
+stdout '^[a-f0-9]{64}$'
+
+# Without --json the banner is unchanged.
+exec restic-age-key repo-init --repo $WORK/repo2 --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+stderr 'created restic repository'
+stderr 'Please note that knowledge of your age identity'
+! stdout .
+
+# Multiple recipients are all reported.
+exec restic-age-key repo-init --repo $WORK/repo3 --recipients-file recipients.json --json
+json-get stdout ageKeyIds
+stdout '[a-f0-9]{64}.*[a-f0-9]{64}'
+
+# --if-not-exists is the automation path, so it must emit a parseable document
+# too rather than exiting successfully with nothing on stdout.
+exec restic-age-key repo-init --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --if-not-exists --json
+! stderr .
+json-get stdout message_type
+stdout '^already_initialized$'
+
+exec restic-age-key repo-init --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --if-not-exists --json
+json-get stdout ageKeyIds
+stdout '[a-f0-9]{64}'
+
+# The repository is never decrypted on that path, so no id is claimed.
+exec restic-age-key repo-init --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --if-not-exists --json
+! stdout '"id"'
+
+# Reconciling through a recipients file reports the same way, including the
+# keys as they stand after reconciliation.
+exec restic-age-key repo-init --repo $WORK/repo3 --recipients-file recipients.json --if-not-exists --identity-file $WORK/key.txt --json
+json-get stdout message_type
+stdout '^already_initialized$'
+
+exec restic-age-key repo-init --repo $WORK/repo3 --recipients-file recipients.json --if-not-exists --identity-file $WORK/key.txt --json
+json-get stdout ageKeyIds
+json-len stdout
+stdout '^2$'
+
+# Dropping a recipient is reflected in the reported key set.
+exec restic-age-key repo-init --repo $WORK/repo3 --recipients-file one-recipient.json --if-not-exists --identity-file $WORK/key.txt --json
+json-get stdout ageKeyIds
+json-len stdout
+stdout '^1$'
+
+exec restic-age-key list --repo $WORK/repo3 --identity-file $WORK/key.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
+! stdout 'age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
+
+# With several keys present, --json reports the requested recipient's key only,
+# matching what --output writes rather than dumping the whole inventory.
+exec restic-age-key repo-init --repo $WORK/repo3 --recipients-file recipients.json --if-not-exists --identity-file $WORK/key.txt
+exec restic-age-key repo-init --repo $WORK/repo3 --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --if-not-exists --json
+json-get stdout ageKeyIds
+json-len stdout
+stdout '^1$'
+
+exec restic-age-key repo-init --repo $WORK/repo3 --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --if-not-exists --output ids.txt
+grep '^[a-f0-9]{8}$' ids.txt
+
+# A recipient that is absent is an error for --json just as it is for --output.
+! exec restic-age-key repo-init --repo $WORK/repo3 --recipient age15xz8e5kyjguheag9a99nmwfrf5z3wr9729x2nhdk8zdfcny7a4wqtyl0rn --if-not-exists --output absent.txt
+stderr 'is not present in the existing repository'
+! exec restic-age-key repo-init --repo $WORK/repo3 --recipient age15xz8e5kyjguheag9a99nmwfrf5z3wr9729x2nhdk8zdfcny7a4wqtyl0rn --if-not-exists --json
+! stdout .
+stderr 'is not present in the existing repository'
+
+# A failing --output must not be preceded by a machine-readable success.
+! exec restic-age-key repo-init --repo $WORK/repo4 --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --json --output $WORK/missing-dir/ids.txt
+! stdout .
+stderr 'failed to create output file'
+
+# The human form reports nothing on that failure either.
+! exec restic-age-key repo-init --repo $WORK/repo5 --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --output $WORK/missing-dir/ids.txt
+! stderr 'created restic repository'
+stderr 'failed to create output file'
+
+# Both are still produced when the write succeeds.
+exec restic-age-key repo-init --repo $WORK/repo6 --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --json --output $WORK/ok.txt
+json-get stdout message_type
+stdout '^initialized$'
+grep '^[a-f0-9]{8}$' $WORK/ok.txt
+
+# Without --json the human notice is unchanged.
+exec restic-age-key repo-init --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --if-not-exists
+stderr 'repository already initialized at'
+! stdout .
+
+-- key.txt --
+AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY
+
+-- one-recipient.json --
+[
+    { "user": "alice", "pubkey": "age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7" }
+]
+
+-- recipients.json --
+[
+    { "user": "alice", "pubkey": "age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7" },
+    { "user": "bob", "pubkey": "age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw" }
+]
