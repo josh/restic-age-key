@@ -1,0 +1,51 @@
+# list --json emits restic's key schema, extended with the age public key.
+
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+exec restic init
+exec restic-age-key add --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+
+# Both tools report the same number of keys.
+exec restic key list --json
+json-len stdout
+stdout 2
+
+exec restic-age-key list --json
+json-len stdout
+stdout 2
+
+# Every field restic emits is present, plus agePubkey.
+exec restic-age-key list --json
+stdout '"current":'
+stdout '"id":'
+stdout '"userName":'
+stdout '"hostName":'
+stdout '"created":'
+stdout '"agePubkey":"age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7"'
+
+# JSON mode replaces the table rather than adding to it.
+! stdout 'Age Pubkey'
+! stdout '\-\-\-\-\-'
+
+# Exactly one entry carries the age key; the original password key carries none.
+exec restic-age-key list --json
+json-filter stdout agePubkey=age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+json-len stdout
+stdout 1
+
+exec restic-age-key list --json
+json-filter stdout current=true
+json-len stdout
+stdout 1
+
+# The table is still the default.
+exec restic-age-key list
+stdout 'Age Pubkey'
+
+# --json is accepted by commands that have no JSON output, as in restic.
+exec restic key list --json
+exec restic-age-key add --json --recipient age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw
+stderr 'Add key'
+
+-- password.txt --
+secret
