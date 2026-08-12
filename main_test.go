@@ -246,7 +246,8 @@ func scriptSha256(ts *testscript.TestScript, neg bool, args []string) {
 	ts.Check(err)
 	digest := sha256.Sum256(data)
 	sum := hex.EncodeToString(digest[:])
-	fmt.Fprintln(ts.Stdout(), sum)
+	_, err = fmt.Fprintln(ts.Stdout(), sum)
+	ts.Check(err)
 	if len(args) == 2 {
 		ts.Setenv(args[1], sum)
 	}
@@ -285,7 +286,8 @@ func readLines(ts *testscript.TestScript, file string) []string {
 func writeLines(ts *testscript.TestScript, lines []string) {
 	out := ts.Stdout()
 	for _, line := range lines {
-		fmt.Fprintln(out, line)
+		_, err := fmt.Fprintln(out, line)
+		ts.Check(err)
 	}
 }
 
@@ -326,7 +328,8 @@ func scriptJSONLen(ts *testscript.TestScript, neg bool, args []string) {
 	if !ok {
 		ts.Fatalf("json-len: %s is not a JSON array", args[0])
 	}
-	fmt.Fprintln(ts.Stdout(), len(array))
+	_, err := fmt.Fprintln(ts.Stdout(), len(array))
+	ts.Check(err)
 }
 
 func scriptJSONGet(ts *testscript.TestScript, neg bool, args []string) {
@@ -346,7 +349,8 @@ func scriptJSONGet(ts *testscript.TestScript, neg bool, args []string) {
 		if !ok {
 			ts.Fatalf("json-get: no field %q", args[1])
 		}
-		fmt.Fprintln(out, jsonString(ts, field))
+		_, err := fmt.Fprintln(out, jsonString(ts, field))
+		ts.Check(err)
 	}
 }
 
@@ -364,7 +368,8 @@ func scriptJSONFilter(ts *testscript.TestScript, neg bool, args []string) {
 	}
 	data, err := json.Marshal(matches)
 	ts.Check(err)
-	fmt.Fprintln(ts.Stdout(), string(data))
+	_, err = fmt.Fprintln(ts.Stdout(), string(data))
+	ts.Check(err)
 }
 
 func scriptJSONFind(ts *testscript.TestScript, neg bool, args []string) {
@@ -380,7 +385,8 @@ func scriptJSONFind(ts *testscript.TestScript, neg bool, args []string) {
 			continue
 		}
 		if jsonMatches(ts, value, args[1]) {
-			fmt.Fprintln(ts.Stdout(), entry.Name())
+			_, err = fmt.Fprintln(ts.Stdout(), entry.Name())
+			ts.Check(err)
 			return
 		}
 	}
