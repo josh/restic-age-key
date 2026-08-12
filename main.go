@@ -17,17 +17,13 @@ import (
 	"time"
 
 	"github.com/josh/restic-api/api/backend"
-	"github.com/josh/restic-api/api/backend/azure"
-	"github.com/josh/restic-api/api/backend/b2"
-	"github.com/josh/restic-api/api/backend/gs"
+	"github.com/josh/restic-api/api/backend/all"
 	"github.com/josh/restic-api/api/backend/limiter"
-	"github.com/josh/restic-api/api/backend/local"
 	"github.com/josh/restic-api/api/backend/location"
+	"github.com/josh/restic-api/api/backend/logger"
 	"github.com/josh/restic-api/api/backend/rclone"
-	"github.com/josh/restic-api/api/backend/rest"
-	"github.com/josh/restic-api/api/backend/s3"
-	"github.com/josh/restic-api/api/backend/sftp"
-	"github.com/josh/restic-api/api/backend/swift"
+	"github.com/josh/restic-api/api/backend/retry"
+	"github.com/josh/restic-api/api/backend/sema"
 	"github.com/josh/restic-api/api/crypto"
 	"github.com/josh/restic-api/api/errors"
 	"github.com/josh/restic-api/api/repository"
@@ -396,10 +392,13 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 		return errors.Fatal("Please specify repository location (-r or --repository-file)")
 	}
 
-	repo, _, _, err := openRepositoryWithPassword(ctx, opts)
+	repo, be, _, err := openRepositoryWithPassword(ctx, opts)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		_ = be.Close()
+	}()
 
 	var keys []ListKey
 
@@ -546,17 +545,18 @@ func savePreparedAgeKey(ctx context.Context, repo *repository.Repository, be bac
 		return false, nil
 	}
 
+	h := backend.Handle{Type: restic.KeyFile, Name: key.id.String()}
+
 	if adoptExisting {
-		saved, err := repo.LoadRaw(ctx, restic.KeyFile, key.id)
+		// Probe with Stat rather than Load: the retry backend treats a missing
+		// file as permanent for Stat only, so a Load here would retry and log
+		// on the common path where the key does not exist yet.
+		_, err := be.Stat(ctx, h)
 		switch {
 		case err == nil:
-			if !bytes.Equal(saved, key.raw) {
-				return false, errors.New("existing key differs from expected content")
-			}
-			return false, nil
-		case errors.Is(err, restic.ErrInvalidData):
-			if err := repository.RemoveKey(ctx, repo, key.id); err != nil && !be.IsNotExist(err) {
-				return false, fmt.Errorf("failed to remove corrupt key: %w", err)
+			adopted, err := adoptExistingAgeKey(ctx, repo, be, key)
+			if err != nil || adopted {
+				return false, err
 			}
 		case be.IsNotExist(err):
 		default:
@@ -564,7 +564,6 @@ func savePreparedAgeKey(ctx context.Context, repo *repository.Repository, be bac
 		}
 	}
 
-	h := backend.Handle{Type: restic.KeyFile, Name: key.id.String()}
 	if err := be.Save(ctx, h, backend.NewByteReader(key.raw, be.Hasher())); err != nil {
 		cleanupErr := cleanupUnverifiedKey(ctx, repo, be, key.id)
 		if cleanupErr != nil {
@@ -574,6 +573,29 @@ func savePreparedAgeKey(ctx context.Context, repo *repository.Repository, be bac
 	}
 
 	return true, nil
+}
+
+// adoptExistingAgeKey inspects a key file that already carries the expected ID.
+// It reports whether that file can be kept as-is; a corrupt file is removed so
+// the caller can write it again.
+func adoptExistingAgeKey(ctx context.Context, repo *repository.Repository, be backend.Backend, key preparedAgeKey) (bool, error) {
+	saved, err := repo.LoadRaw(ctx, restic.KeyFile, key.id)
+	switch {
+	case err == nil:
+		if !bytes.Equal(saved, key.raw) {
+			return false, errors.New("existing key differs from expected content")
+		}
+		return true, nil
+	case errors.Is(err, restic.ErrInvalidData):
+		if err := repository.RemoveKey(ctx, repo, key.id); err != nil && !be.IsNotExist(err) {
+			return false, fmt.Errorf("failed to remove corrupt key: %w", err)
+		}
+		return false, nil
+	case be.IsNotExist(err):
+		return false, nil
+	default:
+		return false, fmt.Errorf("failed to check key before saving: %w", err)
+	}
 }
 
 func buildAndSaveAgeKey(ctx context.Context, recipient, host, user string, encrypted encryptedAgePassword, repo *repository.Repository, be backend.Backend, dryRun bool) (restic.ID, string, error) {
@@ -609,6 +631,9 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		_ = be.Close()
+	}()
 
 	if opts.recipient == "" {
 		return errors.Fatal("Please specify recipient (--recipient)")
@@ -845,6 +870,9 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		_ = be.Close()
+	}()
 
 	if err := repo.SearchKey(ctx, tempPassword, 1, ""); err != nil {
 		return fmt.Errorf("failed to load master key: %w", err)
@@ -1402,6 +1430,9 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		_ = be.Close()
+	}()
 	if repo.Key() == nil {
 		return errors.New("repo master key not loaded")
 	}
@@ -2057,6 +2088,7 @@ func openRepositoryWithPasswordPreferring(ctx context.Context, opts options, pre
 		}
 
 		if err != nil {
+			_ = be.Close()
 			return nil, nil, "", errors.Fatalf("Resolving password failed: %v", err)
 		}
 	}
@@ -2072,9 +2104,11 @@ func openRepositoryWithPasswordPreferring(ctx context.Context, opts options, pre
 	}
 
 	if err := repo.SearchKey(ctx, password, maxKeys, keyHint); err != nil {
+		_ = be.Close()
 		return nil, nil, "", fmt.Errorf("failed to verify repository key: %w", err)
 	}
 	if identityKeyID != (restic.ID{}) && repo.KeyID() != identityKeyID {
+		_ = be.Close()
 		return nil, nil, "", fmt.Errorf("opened key %s instead of decrypted key %s", repo.KeyID().String(), identityKeyID.String())
 	}
 
@@ -2161,14 +2195,17 @@ func openRepository(ctx context.Context, opts options) (*repository.Repository, 
 
 	r, err := repository.New(be, repository.Options{})
 	if err != nil {
+		_ = be.Close()
 		return nil, nil, fmt.Errorf("failed to initialize repository: %w", err)
 	}
 
 	_, err = be.Stat(ctx, backend.Handle{Type: restic.ConfigFile})
 	if be.IsNotExist(err) {
+		_ = be.Close()
 		return nil, nil, fmt.Errorf("%w: unable to open config file", errNoRepository)
 	}
 	if err != nil {
+		_ = be.Close()
 		return nil, nil, fmt.Errorf("unable to open config file: %w", err)
 	}
 
@@ -2176,7 +2213,7 @@ func openRepository(ctx context.Context, opts options) (*repository.Repository, 
 }
 
 func createOrOpenBackend(ctx context.Context, opts options, create bool) (backend.Backend, error) {
-	backends := collectBackends()
+	backends := all.Backends()
 
 	loc, err := location.Parse(backends, opts.repo)
 	if err != nil {
@@ -2206,36 +2243,41 @@ func createOrOpenBackend(ctx context.Context, opts options, create bool) (backen
 		if err != nil {
 			return nil, fmt.Errorf("failed to create backend: %w", err)
 		}
-		return be, nil
+		return wrapBackend(be), nil
 	}
 
 	be, err := factory.Open(ctx, cfg, rt, lim, backendErrorLog)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open backend: %w", err)
 	}
-	return be, nil
+	return wrapBackend(be), nil
+}
+
+// wrapBackend layers the connection limiting and retry behaviour that restic
+// applies to every backend, so transient failures do not abort the command.
+func wrapBackend(be backend.Backend) backend.Backend {
+	be = logger.New(sema.NewBackend(be))
+
+	report := func(msg string, err error, d time.Duration) {
+		if d >= 0 {
+			backendErrorLog("%v returned error, retrying after %v: %v", msg, d, err)
+		} else {
+			backendErrorLog("%v failed: %v", msg, err)
+		}
+	}
+	success := func(msg string, retries int) {
+		backendErrorLog("%v operation successful after %d retries", msg, retries)
+	}
+
+	return retry.New(be, 15*time.Minute, report, success)
 }
 
 func repositoryDisplayLocation(repo string) string {
-	return location.StripPassword(collectBackends(), repo)
+	return location.StripPassword(all.Backends(), repo)
 }
 
 func backendErrorLog(msg string, args ...interface{}) {
-	fmt.Fprintf(os.Stderr, msg, args...)
-}
-
-func collectBackends() *location.Registry {
-	backends := location.NewRegistry()
-	backends.Register(azure.NewFactory())
-	backends.Register(b2.NewFactory())
-	backends.Register(gs.NewFactory())
-	backends.Register(local.NewFactory())
-	backends.Register(rclone.NewFactory())
-	backends.Register(rest.NewFactory())
-	backends.Register(s3.NewFactory())
-	backends.Register(sftp.NewFactory())
-	backends.Register(swift.NewFactory())
-	return backends
+	fmt.Fprintf(os.Stderr, msg+"\n", args...)
 }
 
 func printTable(headers []string, rows [][]string) {

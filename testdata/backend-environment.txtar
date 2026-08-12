@@ -1,6 +1,8 @@
 env RESTIC_REST_USERNAME=environment-user
 env RESTIC_REST_PASSWORD=environment-password
 
-! exec restic-age-key list --repo rest:http://127.0.0.1:1/repo --password test-password
+# Like restic, an unreachable backend is retried rather than failing outright,
+# so bound the attempt with --timeout instead of waiting out the retry window.
+! exec restic-age-key list --repo rest:http://127.0.0.1:1/repo --password test-password --timeout 5s
 stderr 'environment-user'
 ! stderr 'environment-password'
