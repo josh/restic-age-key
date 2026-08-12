@@ -1,0 +1,51 @@
+# A repository configured for restic via --repository-file or
+# RESTIC_REPOSITORY_FILE works here too.
+
+env RESTIC_REPOSITORY=$WORK/repo
+exec restic init --password-file $WORK/password.txt
+exec restic-age-key add --password-file $WORK/password.txt --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+env RESTIC_REPOSITORY=
+
+# The flag form resolves the location from the file.
+exec restic key list --repository-file $WORK/repofile.txt --password-file $WORK/password.txt
+exec restic-age-key list --repository-file $WORK/repofile.txt --password-file $WORK/password.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
+
+# So does the environment variable.
+env RESTIC_REPOSITORY_FILE=$WORK/repofile.txt
+exec restic-age-key list --password-file $WORK/password.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
+
+exec restic-age-key password --identity-file $WORK/key.txt
+stdout '^[a-f0-9]{64}$'
+env RESTIC_REPOSITORY_FILE=
+
+# -r is accepted as the shorthand for --repo, and -p for --password-file.
+exec restic-age-key list -r $WORK/repo -p $WORK/password.txt
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
+
+# Specifying both locations is rejected, as restic does.
+! exec restic key list --repo $WORK/repo --repository-file $WORK/repofile.txt --password-file $WORK/password.txt
+stderr 'mutually exclusive'
+! exec restic-age-key list --repo $WORK/repo --repository-file $WORK/repofile.txt --password-file $WORK/password.txt
+! stdout .
+cmp stderr both-stderr.txt
+
+# A missing repository file is reported by name.
+! exec restic-age-key list --repository-file $WORK/absent.txt --password-file $WORK/password.txt
+! stdout .
+cmpenv stderr absent-stderr.txt
+
+-- repofile.txt --
+repo
+
+-- password.txt --
+secret
+
+-- key.txt --
+AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY
+
+-- both-stderr.txt --
+Fatal: Options -r and --repository-file are mutually exclusive, please specify only one
+-- absent-stderr.txt --
+Fatal: $WORK/absent.txt does not exist
