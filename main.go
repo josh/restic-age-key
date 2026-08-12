@@ -1002,7 +1002,8 @@ func runRepoInit(ctx context.Context, opts options) error {
 		return fmt.Errorf("failed to remove temporary password key: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "created restic repository %s at %s\n", repoID.Str(), repositoryDisplayLocation(opts.repo))
+	// restic init prints Config().ID[:10]; Str() would show only 8 characters.
+	fmt.Fprintf(os.Stderr, "created restic repository %s at %s\n", repoID.String()[:10], repositoryDisplayLocation(opts.repo))
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Please note that knowledge of your age identity is required to access")
 	fmt.Fprintln(os.Stderr, "the repository. Losing your identity means that your data is")

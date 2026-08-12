@@ -2,7 +2,7 @@ env RESTIC_AGE_USER=alice
 env RESTIC_AGE_HOST=localhost
 
 exec restic-age-key repo-init --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt
-stderr 'created restic repository [a-f0-9]{8} at'
+stderr 'created restic repository [a-f0-9]{10} at'
 stderr 'repository version: 2'
 stderr 'age key [a-f0-9]{8} for alice@localhost'
 ! stdout .
@@ -14,6 +14,12 @@ stdout [a-f0-9]{64}
 exec restic-age-key list --repo $WORK/repo --identity-file $WORK/key.txt
 stdout age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
 ! stderr .
+
+# restic init abbreviates the repository ID to ten characters; ours matches so
+# the banner we copy word for word does not quietly differ.
+exec restic init --repo $WORK/restic-repo --insecure-no-password
+stdout 'created restic repository [a-f0-9]{10} at'
+! stdout 'created restic repository [a-f0-9]{11} at'
 
 -- key.txt --
 AGE-SECRET-KEY-16HXZ3F6C8JSN9NDFCD8XLGHKS7L39M5PVCS3A53DXX5WT9SPV65Q08EAAY

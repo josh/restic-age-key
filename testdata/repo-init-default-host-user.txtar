@@ -1,5 +1,5 @@
 exec restic-age-key repo-init --repo $WORK/repo --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 --identity-file $WORK/key.txt
-stderr 'created restic repository [a-f0-9]{8} at'
+stderr 'created restic repository [a-f0-9]{10} at'
 stderr 'repository version: 2'
 ! stdout .
 

@@ -3,7 +3,7 @@ env RESTIC_AGE_HOST=localhost
 env RESTIC_AGE_RECIPIENTS_FILE=$WORK/recipients.json
 
 exec restic-age-key repo-init --repo $WORK/repo --identity-file $WORK/key.txt
-stderr 'created restic repository [a-f0-9]{8} at'
+stderr 'created restic repository [a-f0-9]{10} at'
 stderr 'repository version: 2'
 stderr 'age key [a-f0-9]{8} for alice@alice.local'
 ! stdout .
