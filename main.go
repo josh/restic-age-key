@@ -26,6 +26,7 @@ import (
 	"github.com/josh/restic-api/api/backend/sema"
 	"github.com/josh/restic-api/api/crypto"
 	"github.com/josh/restic-api/api/errors"
+	"github.com/josh/restic-api/api/global"
 	"github.com/josh/restic-api/api/repository"
 	"github.com/josh/restic-api/api/restic"
 	"github.com/josh/restic-api/api/textfile"
@@ -120,9 +121,10 @@ func newRootCommand() *cobra.Command {
 		Short: "Manage age-based encryption keys for restic repositories",
 		Long: `restic-age-key allows you to manage age-based encryption keys for restic repositories.
 It supports listing existing keys, adding new keys, and retrieving passwords.`,
-		SilenceErrors: true,
-		SilenceUsage:  true,
-		Version:       Version,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		DisableAutoGenTag: true,
+		Version:           Version,
 	}
 
 	cmd.PersistentFlags().StringVar(&options.ageProgram, "age-program", options.ageProgram, "path to age binary")
@@ -152,14 +154,11 @@ Exit status is 10 if the repository does not exist.
 Exit status is 11 if the repository is already locked.
 Exit status is 12 if the password is incorrect.
 `,
+		DisableAutoGenTag: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if options.timeout > 0 {
-				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
-				defer cancel()
-				return runKeyList(ctx, options, args)
-			} else {
-				return runKeyList(cmd.Context(), options, args)
-			}
+			return runCommand(cmd, args, options.timeout, func(ctx context.Context) error {
+				return runKeyList(ctx, options)
+			})
 		},
 	}
 	addDecryptRepoCommands(listCommand)
@@ -178,14 +177,11 @@ Exit status is 10 if the repository does not exist.
 Exit status is 11 if the repository is already locked.
 Exit status is 12 if the password is incorrect.
 `,
+		DisableAutoGenTag: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if options.timeout > 0 {
-				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
-				defer cancel()
-				return runKeyAdd(ctx, options, args)
-			} else {
-				return runKeyAdd(cmd.Context(), options, args)
-			}
+			return runCommand(cmd, args, options.timeout, func(ctx context.Context) error {
+				return runKeyAdd(ctx, options)
+			})
 		},
 	}
 	addDecryptRepoCommands(addCommand)
@@ -210,14 +206,11 @@ Exit status is 10 if the repository does not exist.
 Exit status is 11 if the repository is already locked.
 Exit status is 12 if the password is incorrect.
 `,
+		DisableAutoGenTag: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if options.timeout > 0 {
-				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
-				defer cancel()
-				return runKeySet(ctx, options, args)
-			} else {
-				return runKeySet(cmd.Context(), options, args)
-			}
+			return runCommand(cmd, args, options.timeout, func(ctx context.Context) error {
+				return runKeySet(ctx, options)
+			})
 		},
 	}
 	addDecryptRepoCommands(setCommand)
@@ -238,14 +231,11 @@ Exit status is 10 if the repository does not exist.
 Exit status is 11 if the repository is already locked.
 Exit status is 12 if the password is incorrect.
 `,
+		DisableAutoGenTag: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if options.timeout > 0 {
-				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
-				defer cancel()
-				return runKeyPassword(ctx, options, args)
-			} else {
-				return runKeyPassword(cmd.Context(), options, args)
-			}
+			return runCommand(cmd, args, options.timeout, func(ctx context.Context) error {
+				return runKeyPassword(ctx, options)
+			})
 		},
 	}
 	passwordCommand.Flags().StringVar(&options.repo, "repo", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
@@ -265,18 +255,15 @@ Exit status is 10 if the repository does not exist.
 Exit status is 11 if the repository is already locked.
 Exit status is 12 if the password is incorrect.
 `,
+		DisableAutoGenTag: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if options.fromRepo == "" {
-				return errors.Fatal("Please specify repository location (--from-repo or RESTIC_FROM_REPOSITORY)")
-			}
-			options.repo = options.fromRepo
-			if options.timeout > 0 {
-				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
-				defer cancel()
-				return runKeyPassword(ctx, options, args)
-			} else {
-				return runKeyPassword(cmd.Context(), options, args)
-			}
+			return runCommand(cmd, args, options.timeout, func(ctx context.Context) error {
+				if options.fromRepo == "" {
+					return errors.Fatal("Please specify repository location (--from-repo or RESTIC_FROM_REPOSITORY)")
+				}
+				options.repo = options.fromRepo
+				return runKeyPassword(ctx, options)
+			})
 		},
 	}
 	fromPasswordCommand.Flags().StringVar(&options.fromRepo, "from-repo", options.fromRepo, "restic repository location (env: RESTIC_FROM_REPOSITORY)")
@@ -296,14 +283,11 @@ Exit status is 10 if the repository does not exist.
 Exit status is 11 if the repository is already locked.
 Exit status is 12 if the password is incorrect.
 `,
+		DisableAutoGenTag: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if options.timeout > 0 {
-				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
-				defer cancel()
-				return runRepoInit(ctx, options, args)
-			} else {
-				return runRepoInit(cmd.Context(), options, args)
-			}
+			return runCommand(cmd, args, options.timeout, func(ctx context.Context) error {
+				return runRepoInit(ctx, options)
+			})
 		},
 	}
 	repoInitCommand.Flags().StringVarP(&options.repo, "repo", "r", options.repo, "repository location (env: RESTIC_REPOSITORY)")
@@ -325,6 +309,23 @@ Exit status is 12 if the password is incorrect.
 	)
 
 	return cmd
+}
+
+// runCommand rejects stray positional arguments the way restic does, then runs
+// fn under the configured timeout.
+func runCommand(cmd *cobra.Command, args []string, timeout time.Duration, fn func(context.Context) error) error {
+	if len(args) > 0 {
+		name := cmd.Name()
+		return fmt.Errorf("the %s command expects no arguments, only options - please see `restic-age-key help %s` for usage and flags", name, name)
+	}
+
+	if timeout <= 0 {
+		return fn(cmd.Context())
+	}
+
+	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
+	defer cancel()
+	return fn(ctx)
 }
 
 func main() {
@@ -387,7 +388,7 @@ type ListKey struct {
 	Created   string
 }
 
-func runKeyList(ctx context.Context, opts options, args []string) error {
+func runKeyList(ctx context.Context, opts options) error {
 	if opts.repo == "" {
 		return errors.Fatal("Please specify repository location (-r or --repository-file)")
 	}
@@ -422,19 +423,14 @@ func runKeyList(ctx context.Context, opts options, args []string) error {
 		idStr := id.String()
 		isCurrent := idStr == currentKeyIDStr
 
-		shortID := idStr
-		if len(idStr) > 8 {
-			shortID = idStr[:8]
-		}
-
 		keys = append(keys, ListKey{
 			ID:        idStr,
-			ShortID:   shortID,
+			ShortID:   id.Str(),
 			IsCurrent: isCurrent,
 			AgePubkey: k.AgePubkey,
 			Username:  k.Username,
 			Hostname:  k.Hostname,
-			Created:   k.Created.Local().Format("2006-01-02 15:04:05"),
+			Created:   k.Created.Local().Format(global.TimeFormat),
 		})
 
 		return nil
@@ -615,7 +611,7 @@ func buildAndSaveAgeKey(ctx context.Context, recipient, host, user string, encry
 	return key.id, key.password, nil
 }
 
-func runKeyAdd(ctx context.Context, opts options, args []string) error {
+func runKeyAdd(ctx context.Context, opts options) error {
 	if opts.repo == "" {
 		return errors.Fatal("Please specify repository location (-r or --repository-file)")
 	}
@@ -691,7 +687,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 			return fmt.Errorf("failed to write key id to file: %w", err)
 		}
 
-		_, err = file.WriteString(id.String()[0:8] + "\n")
+		_, err = file.WriteString(id.Str() + "\n")
 		if err != nil {
 			_ = file.Close()
 			return fmt.Errorf("failed to write key id to file: %w", err)
@@ -705,7 +701,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	return nil
 }
 
-func runKeyPassword(ctx context.Context, opts options, args []string) error {
+func runKeyPassword(ctx context.Context, opts options) error {
 	if opts.repo == "" {
 		return errors.Fatal("Please specify repository location (-r or --repository-file)")
 	}
@@ -742,7 +738,7 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 	return nil
 }
 
-func runRepoInit(ctx context.Context, opts options, args []string) error {
+func runRepoInit(ctx context.Context, opts options) error {
 	if opts.repo == "" {
 		return errors.Fatal("Please specify repository location (-r or --repo)")
 	}
@@ -796,7 +792,7 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 
 		if err == nil && state.exists {
 			if opts.recipientsFile != "" {
-				if err := runKeySet(ctx, opts, args); err != nil {
+				if err := runKeySet(ctx, opts); err != nil {
 					return err
 				}
 			} else {
@@ -944,10 +940,10 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 			if user == "" {
 				user = opts.user
 			}
-			fmt.Fprintf(os.Stderr, "  age key %s for %s@%s\n", ageKeyID.Str()[0:8], user, host)
+			fmt.Fprintf(os.Stderr, "  age key %s for %s@%s\n", ageKeyID.Str(), user, host)
 		}
 	} else {
-		fmt.Fprintf(os.Stderr, "  age key %s for %s@%s\n", ageKeyIDs[0].Str()[0:8], opts.user, opts.host)
+		fmt.Fprintf(os.Stderr, "  age key %s for %s@%s\n", ageKeyIDs[0].Str(), opts.user, opts.host)
 	}
 
 	if opts.output != "" {
@@ -1022,7 +1018,7 @@ func writeRepoInitKeyIDs(path string, ids []restic.ID) error {
 		if id.String() == lastID {
 			continue
 		}
-		if _, err := file.WriteString(id.Str()[0:8] + "\n"); err != nil {
+		if _, err := file.WriteString(id.Str() + "\n"); err != nil {
 			_ = file.Close()
 			return fmt.Errorf("failed to write to output file: %w", err)
 		}
@@ -1407,7 +1403,7 @@ func validateSetInventory(inventory setKeyInventory, recipients []Recipient, opt
 	return nil
 }
 
-func runKeySet(ctx context.Context, opts options, args []string) error {
+func runKeySet(ctx context.Context, opts options) error {
 	if opts.repo == "" {
 		return errors.Fatal("Please specify repository location (-r or --repository-file)")
 	}

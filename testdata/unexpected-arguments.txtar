@@ -1,0 +1,34 @@
+# Stray positional arguments are rejected instead of being silently ignored,
+# matching how restic reports the same mistake.
+
+env RESTIC_REPOSITORY=$WORK/repo
+exec restic init --password-file $WORK/password.txt
+
+! exec restic key list junk
+stderr 'expects no arguments, only options'
+
+! exec restic-age-key list --password-file $WORK/password.txt junk
+! stdout .
+cmp stderr list-stderr.txt
+
+! exec restic-age-key add --password-file $WORK/password.txt --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7 junk
+! stdout .
+cmp stderr add-stderr.txt
+
+! exec restic-age-key password junk
+! stdout .
+cmp stderr password-stderr.txt
+
+# The valid form still works.
+exec restic-age-key list --password-file $WORK/password.txt
+stdout ' ID'
+
+-- password.txt --
+secret
+
+-- list-stderr.txt --
+the list command expects no arguments, only options - please see `restic-age-key help list` for usage and flags
+-- add-stderr.txt --
+the add command expects no arguments, only options - please see `restic-age-key help add` for usage and flags
+-- password-stderr.txt --
+the password command expects no arguments, only options - please see `restic-age-key help password` for usage and flags
