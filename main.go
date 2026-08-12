@@ -760,18 +760,7 @@ func runKeyAdd(ctx context.Context, opts options) error {
 	fmt.Fprintf(os.Stderr, "Add key %s for %s@%s\n", opts.recipient, opts.user, opts.host)
 
 	if opts.output != "" {
-		file, err := os.OpenFile(opts.output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-		if err != nil {
-			return fmt.Errorf("failed to write key id to file: %w", err)
-		}
-
-		_, err = file.WriteString(id.Str() + "\n")
-		if err != nil {
-			_ = file.Close()
-			return fmt.Errorf("failed to write key id to file: %w", err)
-		}
-
-		if err := file.Close(); err != nil {
+		if err := writeOutputFile(opts.output, id.Str()+"\n", "key id"); err != nil {
 			return fmt.Errorf("failed to write key id to file: %w", err)
 		}
 	}
@@ -797,17 +786,7 @@ func runKeyPassword(ctx context.Context, opts options) error {
 	}
 
 	if opts.output != "" {
-		file, err := os.OpenFile(opts.output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-		if err != nil {
-			return fmt.Errorf("failed to write password to file: %w", err)
-		}
-
-		if _, err := file.WriteString(password + "\n"); err != nil {
-			_ = file.Close()
-			return fmt.Errorf("failed to write password to file: %w", err)
-		}
-
-		if err := file.Close(); err != nil {
+		if err := writeOutputFile(opts.output, password+"\n", "password"); err != nil {
 			return fmt.Errorf("failed to write password to file: %w", err)
 		}
 	} else {
@@ -1120,6 +1099,31 @@ func matchingAgeKeyIDs(ageKeys []Recipient, desired []Recipient) ([]restic.ID, [
 	return ids, missing
 }
 
+// writeOutputFile writes data to path in place, the way age's --output does, so
+// a destination that is a symlink or a device such as /dev/stdout still works.
+// New files are created owner-only, matching age-keygen. The mode only applies
+// on creation, so an existing file keeps its own permissions; like age-keygen
+// this warns rather than changing permissions the caller chose.
+func writeOutputFile(path string, data string, what string) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %w", err)
+	}
+
+	if info, statErr := file.Stat(); statErr == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o004 != 0 {
+		fmt.Fprintf(os.Stderr, "warn: writing %s to a world-readable file\n", what)
+	}
+
+	if _, err := file.WriteString(data); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("failed to write to output file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("failed to write to output file: %w", err)
+	}
+	return nil
+}
+
 func writeRepoInitKeyIDs(path string, ids []restic.ID) error {
 	if len(ids) == 0 {
 		return errors.New("no age key IDs available for output")
@@ -1130,44 +1134,17 @@ func writeRepoInitKeyIDs(path string, ids []restic.ID) error {
 		return ids[i].String() < ids[j].String()
 	})
 
-	dir := filepath.Dir(path)
-	file, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-")
-	if err != nil {
-		return fmt.Errorf("failed to create output file: %w", err)
-	}
-	tempPath := file.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = file.Close()
-			_ = os.Remove(tempPath)
-		}
-	}()
-
-	if err := file.Chmod(0o600); err != nil {
-		return fmt.Errorf("failed to secure output file: %w", err)
-	}
-
+	var out strings.Builder
 	lastID := ""
 	for _, id := range ids {
 		if id.String() == lastID {
 			continue
 		}
-		if _, err := file.WriteString(id.Str() + "\n"); err != nil {
-			_ = file.Close()
-			return fmt.Errorf("failed to write to output file: %w", err)
-		}
+		out.WriteString(id.Str() + "\n")
 		lastID = id.String()
 	}
 
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("failed to write to output file: %w", err)
-	}
-	if err := os.Rename(tempPath, path); err != nil {
-		return fmt.Errorf("failed to replace output file: %w", err)
-	}
-	cleanup = false
-	return nil
+	return writeOutputFile(path, out.String(), "key ids")
 }
 
 type outputInput struct {

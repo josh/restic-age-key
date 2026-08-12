@@ -51,6 +51,7 @@ func TestScript(t *testing.T) {
 			"hardlink":       scriptHardlink,
 			"capture-output": scriptCaptureOutput,
 			"exit-status":    scriptExitStatus,
+			"mode":           scriptMode,
 			"sha256":         scriptSha256,
 			"cut-chars":      scriptCutChars,
 			"sort-lines":     scriptSortLines,
@@ -238,6 +239,14 @@ func scriptExitStatus(ts *testscript.TestScript, neg bool, args []string) {
 		ts.Fatalf("exit-status: %v", err)
 	}
 	ts.Check(os.WriteFile(ts.MkAbs(args[0]), []byte(strconv.Itoa(code)+"\n"), 0o600))
+}
+
+func scriptMode(ts *testscript.TestScript, neg bool, args []string) {
+	requireArgs(ts, neg, args, "mode file", 1, 1)
+	info, err := os.Stat(ts.MkAbs(args[0]))
+	ts.Check(err)
+	_, err = fmt.Fprintf(ts.Stdout(), "%03o\n", info.Mode().Perm())
+	ts.Check(err)
 }
 
 func scriptSha256(ts *testscript.TestScript, neg bool, args []string) {
