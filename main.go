@@ -75,6 +75,7 @@ type options struct {
 	transport          backend.TransportOptions
 	limits             limiter.Limits
 	dryRun             bool
+	noLock             bool
 	json               bool
 	chunkerPolynomial  string
 	ifNotExists        bool
@@ -158,6 +159,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	cmd.PersistentFlags().DurationVar(&options.timeout, "timeout", options.timeout, "command timeout (env: RESTIC_AGE_TIMEOUT)")
 	cmd.PersistentFlags().BoolVar(&options.json, "json", false, "set output mode to JSON for commands that support it")
 	cmd.PersistentFlags().DurationVar(&options.retryLock, "retry-lock", 0, "retry to lock the repository if it is already locked, takes a value like 5m or 2h (default: no retries)")
+	cmd.PersistentFlags().BoolVar(&options.noLock, "no-lock", false, "do not lock the repository, this allows some operations on read-only repositories")
 	cmd.PersistentFlags().StringVar(&options.keyHint, "key-hint", options.keyHint, "key ID of key to try decrypting first (env: RESTIC_KEY_HINT)")
 	cmd.PersistentFlags().StringSliceVarP(&options.extended, "option", "o", nil, "set extended option (key=value, can be specified multiple times)")
 	cmd.PersistentFlags().StringSliceVar(&options.transport.RootCertFilenames, "cacert", options.transport.RootCertFilenames, "file to load root certificates from (env: RESTIC_CACERT)")
@@ -447,6 +449,18 @@ func runKeyList(ctx context.Context, opts options) error {
 	defer func() {
 		_ = be.Close()
 	}()
+
+	// restic's key list holds a non-exclusive lock so a concurrent writer cannot
+	// remove a key midway through the listing. --no-lock skips it, which is what
+	// makes listing a read-only repository possible.
+	if !opts.noLock {
+		unlocker, lockedCtx, err := repository.Lock(ctx, repo, false, opts.retryLock, lockRetryLog, backendErrorLog)
+		if err != nil {
+			return fmt.Errorf("failed to lock repository: %w", err)
+		}
+		defer unlocker.Unlock()
+		ctx = lockedCtx
+	}
 
 	var keys []ListKey
 
