@@ -79,6 +79,28 @@ extended backend options, `--key-hint`, `--cacert`, `--tls-client-cert`,
 `--insecure-tls`, `--http-user-agent`, `--stuck-request-timeout`, and
 `--limit-upload`/`--limit-download`.
 
+### Password resolution
+
+Commands that unlock a repository with an existing restic password — `list`, `add`
+and `set` — look for one in this order, stopping at the first that is set:
+
+1. `--password`
+2. `--password-command` / `RESTIC_PASSWORD_COMMAND`
+3. `--password-file` / `RESTIC_PASSWORD_FILE`
+4. `RESTIC_PASSWORD`
+
+Steps 2 to 4 are restic's own order, so a repository configured for restic behaves
+the same here. `--password` has no restic equivalent and takes precedence over all
+of them, which lets you override an inherited `RESTIC_PASSWORD_COMMAND` from the
+command line.
+
+Supplying both `--password-file` and `--password-command` is an error, as it is in
+restic. For a repository created with `restic init --insecure-no-password`, pass
+`--insecure-no-password`; it cannot be combined with any of the sources above.
+
+None of this applies to `password` and `from-password`, which unlock the repository
+with an age identity rather than a restic password.
+
 Should you need to recover your password without `restic-age-key`, you can use a few standard unix tools.
 
 ```sh
