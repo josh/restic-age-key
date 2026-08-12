@@ -2068,6 +2068,7 @@ func ageEncryptRandomKey(ctx context.Context, ageProgram string, pubkey string) 
 
 	cmd := exec.CommandContext(ctx, ageProgram, "--encrypt", "--recipient", pubkey)
 	cmd.Stdin = bytes.NewReader(key)
+	cmd.WaitDelay = time.Second
 
 	out, err := cmd.Output()
 	if err != nil {
@@ -2092,6 +2093,7 @@ func ageEncryptRandomKey(ctx context.Context, ageProgram string, pubkey string) 
 func ageDecryptKey(ctx context.Context, ageProgram string, identityFile string, key []byte) (string, error) {
 	cmd := exec.CommandContext(ctx, ageProgram, "--decrypt", "--identity", identityFile)
 	cmd.Stdin = bytes.NewReader(key)
+	cmd.WaitDelay = time.Second
 
 	out, err := cmd.Output()
 	if err != nil {
