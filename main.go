@@ -27,6 +27,7 @@ import (
 	"github.com/josh/restic-api/api/crypto"
 	"github.com/josh/restic-api/api/errors"
 	"github.com/josh/restic-api/api/global"
+	resticopts "github.com/josh/restic-api/api/options"
 	"github.com/josh/restic-api/api/repository"
 	"github.com/josh/restic-api/api/restic"
 	"github.com/josh/restic-api/api/textfile"
@@ -63,6 +64,10 @@ type options struct {
 	user              string
 	output            string
 	timeout           time.Duration
+	keyHint           string
+	extended          []string
+	transport         backend.TransportOptions
+	limits            limiter.Limits
 	dryRun            bool
 	chunkerPolynomial string
 	ifNotExists       bool
@@ -85,6 +90,13 @@ func newRootCommand() *cobra.Command {
 		user:              os.Getenv("RESTIC_AGE_USER"),
 		host:              os.Getenv("RESTIC_AGE_HOST"),
 		chunkerPolynomial: os.Getenv("RESTIC_AGE_CHUNKER_POLYNOMIAL"),
+		keyHint:           os.Getenv("RESTIC_KEY_HINT"),
+	}
+
+	options.transport.TLSClientCertKeyFilename = os.Getenv("RESTIC_TLS_CLIENT_CERT")
+	options.transport.HTTPUserAgent = os.Getenv("RESTIC_HTTP_USER_AGENT")
+	if certs := os.Getenv("RESTIC_CACERT"); certs != "" {
+		options.transport.RootCertFilenames = strings.Split(certs, ",")
 	}
 
 	if timeoutStr := os.Getenv("RESTIC_AGE_TIMEOUT"); timeoutStr != "" {
@@ -135,6 +147,15 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	cmd.PersistentFlags().StringVar(&options.identityFile, "identity-file", options.identityFile, "age identity file (env: RESTIC_AGE_IDENTITY_FILE)")
 	cmd.PersistentFlags().StringVar(&options.identityCommand, "identity-command", options.identityCommand, "age identity command (env: RESTIC_AGE_IDENTITY_COMMAND)")
 	cmd.PersistentFlags().DurationVar(&options.timeout, "timeout", options.timeout, "command timeout (env: RESTIC_AGE_TIMEOUT)")
+	cmd.PersistentFlags().StringVar(&options.keyHint, "key-hint", options.keyHint, "key ID of key to try decrypting first (env: RESTIC_KEY_HINT)")
+	cmd.PersistentFlags().StringSliceVarP(&options.extended, "option", "o", nil, "set extended option (key=value, can be specified multiple times)")
+	cmd.PersistentFlags().StringSliceVar(&options.transport.RootCertFilenames, "cacert", options.transport.RootCertFilenames, "file to load root certificates from (env: RESTIC_CACERT)")
+	cmd.PersistentFlags().StringVar(&options.transport.TLSClientCertKeyFilename, "tls-client-cert", options.transport.TLSClientCertKeyFilename, "path to a file containing PEM encoded TLS client certificate and private key (env: RESTIC_TLS_CLIENT_CERT)")
+	cmd.PersistentFlags().BoolVar(&options.transport.InsecureTLS, "insecure-tls", false, "skip TLS certificate verification when connecting to the repository (insecure)")
+	cmd.PersistentFlags().StringVar(&options.transport.HTTPUserAgent, "http-user-agent", options.transport.HTTPUserAgent, "set a http user agent for outgoing http requests (env: RESTIC_HTTP_USER_AGENT)")
+	cmd.PersistentFlags().DurationVar(&options.transport.StuckRequestTimeout, "stuck-request-timeout", 5*time.Minute, "duration after which to retry stuck requests")
+	cmd.PersistentFlags().IntVar(&options.limits.UploadKb, "limit-upload", 0, "limits uploads to a maximum rate in KiB/s. (default: unlimited)")
+	cmd.PersistentFlags().IntVar(&options.limits.DownloadKb, "limit-download", 0, "limits downloads to a maximum rate in KiB/s. (default: unlimited)")
 
 	addDecryptRepoCommands := func(cmd *cobra.Command) {
 		cmd.Flags().StringVarP(&options.repo, "repo", "r", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
@@ -1800,6 +1821,12 @@ func verifyIdentityKey(ctx context.Context, repo *repository.Repository, id rest
 	return nil
 }
 
+// matchesKeyHint reports whether id is the key named by --key-hint, which
+// restic matches as an ID prefix.
+func matchesKeyHint(keyHint string, id restic.ID) bool {
+	return keyHint != "" && strings.HasPrefix(id.String(), keyHint)
+}
+
 func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Repository, opts options, preferredPubkeys map[string]Recipient) (string, restic.ID, error) {
 	closeIdentityCommand, err := readIdentityCommand(ctx, &opts)
 	if err != nil {
@@ -1853,6 +1880,11 @@ func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Rep
 		_, jPreferred := preferredPubkeys[candidates[j].pubkey]
 		if iPreferred != jPreferred {
 			return iPreferred
+		}
+		iHinted := matchesKeyHint(opts.keyHint, candidates[i].id)
+		jHinted := matchesKeyHint(opts.keyHint, candidates[j].id)
+		if iHinted != jHinted {
+			return iHinted
 		}
 		return candidates[i].id.String() < candidates[j].id.String()
 	})
@@ -2100,7 +2132,7 @@ func openRepositoryWithPasswordPreferring(ctx context.Context, opts options, pre
 	}
 
 	maxKeys := 20
-	keyHint := ""
+	keyHint := opts.keyHint
 	if identityKeyID != (restic.ID{}) {
 		if repo.KeyID() == identityKeyID {
 			return repo, be, password, nil
@@ -2265,11 +2297,21 @@ func createOrOpenBackend(ctx context.Context, opts options, create bool) (backen
 		rcloneCfg.Program = opts.rcloneProgram
 	}
 
-	rt, err := backend.Transport(backend.TransportOptions{})
+	extended, err := resticopts.Parse(opts.extended)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse extended options: %w", err)
+	}
+	if err := extended.Extract(loc.Scheme).Apply(loc.Scheme, cfg); err != nil {
+		return nil, fmt.Errorf("failed to apply extended options: %w", err)
+	}
+
+	rt, err := backend.Transport(opts.transport)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create backend transport: %w", err)
 	}
-	lim := limiter.NewStaticLimiter(limiter.Limits{})
+	lim := limiter.NewStaticLimiter(opts.limits)
+	rt = lim.Transport(rt)
+
 	factory := backends.Lookup(loc.Scheme)
 	if factory == nil {
 		return nil, fmt.Errorf("unknown repository backend: %s", loc.Scheme)
