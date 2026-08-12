@@ -1636,6 +1636,51 @@ type identityKeyCandidate struct {
 	data    []byte
 }
 
+func openIdentityKeyError(id restic.ID, err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, crypto.ErrUnauthenticated):
+		return fmt.Errorf("decrypted password does not open key %s: %w", id.Str(), err)
+	default:
+		return fmt.Errorf("failed to verify key %s: %w", id.Str(), err)
+	}
+}
+
+// verifyIdentityKey checks that password opens key id and that the key belongs
+// to this repository. A repository whose config cannot be read is left
+// unverified so that restic reports the damaged config itself instead of this
+// surfacing as a password failure.
+func verifyIdentityKey(ctx context.Context, repo *repository.Repository, id restic.ID, password string, keysComplete bool) error {
+	config, err := repo.LoadRaw(ctx, restic.ConfigFile, restic.ID{})
+	if err != nil || len(config) < crypto.CiphertextLength(0) {
+		_, openErr := repository.OpenKey(ctx, repo, id, password)
+		return openIdentityKeyError(id, openErr)
+	}
+
+	// SearchKey scans other key files when the hinted key fails to open, and
+	// OpenKey panics on a key file whose data is shorter than a nonce. Opening
+	// the hinted key first keeps that scan from running.
+	if !keysComplete {
+		if _, openErr := repository.OpenKey(ctx, repo, id, password); openErr != nil {
+			return openIdentityKeyError(id, openErr)
+		}
+	}
+
+	searchErr := repo.SearchKey(ctx, password, 1, id.String())
+	if errors.Is(searchErr, crypto.ErrUnauthenticated) {
+		return fmt.Errorf("key %s does not open this repository: %w", id.Str(), searchErr)
+	}
+	if searchErr != nil {
+		_, openErr := repository.OpenKey(ctx, repo, id, password)
+		return openIdentityKeyError(id, openErr)
+	}
+	if openedID := repo.KeyID(); openedID != id {
+		return fmt.Errorf("opened key %s instead of decrypted key %s", openedID.Str(), id.Str())
+	}
+	return nil
+}
+
 func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Repository, opts options, preferredPubkeys map[string]Recipient) (string, restic.ID, error) {
 	closeIdentityCommand, err := readIdentityCommand(ctx, &opts)
 	if err != nil {
@@ -1649,6 +1694,7 @@ func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Rep
 
 	var candidates []identityKeyCandidate
 	var keyErr error
+	keysComplete := true
 
 	listErr := repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
 		data, err := repo.LoadRaw(ctx, restic.KeyFile, id)
@@ -1656,11 +1702,18 @@ func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Rep
 			if keyErr == nil {
 				keyErr = err
 			}
+			keysComplete = false
 			return nil
 		}
 
 		var key AgeKey
-		if err := json.Unmarshal(data, &key); err != nil || key.AgePubkey == "" {
+		if err := json.Unmarshal(data, &key); err != nil {
+			return nil
+		}
+		if len(key.Data) < crypto.CiphertextLength(0) {
+			keysComplete = false
+		}
+		if key.AgePubkey == "" {
 			return nil
 		}
 
@@ -1695,7 +1748,7 @@ func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Rep
 				}
 				continue
 			}
-			_, openErr := repository.OpenKey(ctx, repo, candidate.id, password)
+			openErr := verifyIdentityKey(ctx, repo, candidate.id, password, keysComplete)
 			if openErr == nil {
 				return password, candidate.id, nil
 			}
@@ -1703,11 +1756,7 @@ func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Rep
 				return "", restic.ID{}, fmt.Errorf("failed to verify key %s: %w", candidate.id.Str(), openErr)
 			}
 			if verifyErr == nil {
-				if errors.Is(openErr, crypto.ErrUnauthenticated) {
-					verifyErr = fmt.Errorf("decrypted password does not open key %s: %w", candidate.id.Str(), openErr)
-				} else {
-					verifyErr = fmt.Errorf("failed to verify key %s: %w", candidate.id.Str(), openErr)
-				}
+				verifyErr = openErr
 			}
 			continue
 		}
@@ -1932,6 +1981,9 @@ func openRepositoryWithPasswordPreferring(ctx context.Context, opts options, pre
 	maxKeys := 20
 	keyHint := ""
 	if identityKeyID != (restic.ID{}) {
+		if repo.KeyID() == identityKeyID {
+			return repo, be, password, nil
+		}
 		maxKeys = 1
 		keyHint = identityKeyID.String()
 	}
