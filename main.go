@@ -541,8 +541,21 @@ type encryptedAgePassword struct {
 	data     []byte
 }
 
+var calibratedParams *crypto.Params
+
+func calibrateParams() (crypto.Params, error) {
+	if calibratedParams == nil {
+		params, err := crypto.Calibrate(500*time.Millisecond, 60)
+		if err != nil {
+			return crypto.Params{}, err
+		}
+		calibratedParams = &params
+	}
+	return *calibratedParams, nil
+}
+
 func prepareAgeKey(recipient, host, user string, master crypto.Key, encrypted encryptedAgePassword) (preparedAgeKey, error) {
-	params, err := crypto.Calibrate(500*time.Millisecond, 60)
+	params, err := calibrateParams()
 	if err != nil {
 		return preparedAgeKey{}, fmt.Errorf("failed to calibrate crypto parameters: %w", err)
 	}
