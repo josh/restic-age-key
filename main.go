@@ -659,6 +659,12 @@ func buildAndSaveAgeKey(ctx context.Context, recipient, host, user string, encry
 		return restic.ID{}, "", err
 	}
 
+	if !dryRun {
+		if err := verifyNewAgeKey(ctx, repo, be, key.id, key.password, *repo.Key()); err != nil {
+			return restic.ID{}, "", err
+		}
+	}
+
 	return key.id, key.password, nil
 }
 
@@ -725,6 +731,12 @@ func runKeyAdd(ctx context.Context, opts options) error {
 		return err
 	}
 	id := key.id
+
+	if !opts.dryRun {
+		if err := verifyNewAgeKey(ctx, repo, be, id, key.password, expectedMaster); err != nil {
+			return err
+		}
+	}
 
 	if opts.dryRun {
 		fmt.Fprintf(os.Stderr, "[DRY RUN] Add key %s for %s@%s\n", opts.recipient, opts.user, opts.host)
@@ -1307,6 +1319,20 @@ func verifyKeyAccess(ctx context.Context, be backend.Backend, id restic.ID, pass
 	}
 
 	return probe, nil
+}
+
+// verifyNewAgeKey proves a freshly written key really opens the repository and
+// removes it if it does not, mirroring restic's switchToNewKeyAndRemoveIfBroken.
+// Only the scrypt half is checkable here: whether the recipient can decrypt the
+// age payload cannot be known without their identity.
+func verifyNewAgeKey(ctx context.Context, repo *repository.Repository, be backend.Backend, id restic.ID, password string, expectedMaster crypto.Key) error {
+	if _, err := verifyKeyAccess(ctx, be, id, password, expectedMaster); err != nil {
+		if cleanupErr := cleanupUnverifiedKey(ctx, repo, be, id); cleanupErr != nil {
+			return fmt.Errorf("failed to verify new key %s: %v; failed to remove it: %w", id.Str(), err, cleanupErr)
+		}
+		return fmt.Errorf("failed to verify new key %s: %w", id.Str(), err)
+	}
+	return nil
 }
 
 func cleanupUnverifiedKey(ctx context.Context, repo *repository.Repository, be backend.Backend, id restic.ID) error {
