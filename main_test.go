@@ -50,6 +50,7 @@ func TestScript(t *testing.T) {
 			"wait4file":      scriptWait4file,
 			"hardlink":       scriptHardlink,
 			"capture-output": scriptCaptureOutput,
+			"exit-status":    scriptExitStatus,
 			"sha256":         scriptSha256,
 			"cut-chars":      scriptCutChars,
 			"sort-lines":     scriptSortLines,
@@ -224,6 +225,19 @@ func scriptCaptureOutput(ts *testscript.TestScript, neg bool, args []string) {
 		ts.Fatalf("capture-output: stdout has multiple lines")
 	}
 	ts.Setenv(args[0], value)
+}
+
+func scriptExitStatus(ts *testscript.TestScript, neg bool, args []string) {
+	requireArgs(ts, neg, args, "exit-status file program [args...]", 2, 64)
+	err := ts.Exec(args[1], args[2:]...)
+	code := 0
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		code = exitErr.ExitCode()
+	} else if err != nil {
+		ts.Fatalf("exit-status: %v", err)
+	}
+	ts.Check(os.WriteFile(ts.MkAbs(args[0]), []byte(strconv.Itoa(code)+"\n"), 0o600))
 }
 
 func scriptSha256(ts *testscript.TestScript, neg bool, args []string) {

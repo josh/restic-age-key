@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,6 +29,7 @@ import (
 	"github.com/josh/restic-api/api/backend/sftp"
 	"github.com/josh/restic-api/api/backend/swift"
 	"github.com/josh/restic-api/api/crypto"
+	"github.com/josh/restic-api/api/errors"
 	"github.com/josh/restic-api/api/repository"
 	"github.com/josh/restic-api/api/restic"
 	"github.com/josh/restic-api/api/textfile"
@@ -43,6 +43,10 @@ var (
 	RcloneProgram = "rclone"
 	Version       = "1.1.4"
 )
+
+// errNoRepository mirrors restic's sentinel for a missing backend or config
+// file, so the same condition maps to the same exit code.
+var errNoRepository = errors.New("repository does not exist")
 
 type options struct {
 	ageProgram        string
@@ -141,6 +145,17 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	listCommand := &cobra.Command{
 		Use:   "list",
 		Short: "List all keys in the repository",
+		Long: `The list command lists all keys stored in the repository.
+
+EXIT STATUS
+===========
+
+Exit status is 0 if the command was successful.
+Exit status is 1 if there was any error.
+Exit status is 10 if the repository does not exist.
+Exit status is 11 if the repository is already locked.
+Exit status is 12 if the password is incorrect.
+`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if options.timeout > 0 {
 				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
@@ -156,6 +171,17 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	addCommand := &cobra.Command{
 		Use:   "add",
 		Short: "Add a new key to the repository",
+		Long: `The add command adds a new age-encrypted key to the repository.
+
+EXIT STATUS
+===========
+
+Exit status is 0 if the command was successful.
+Exit status is 1 if there was any error.
+Exit status is 10 if the repository does not exist.
+Exit status is 11 if the repository is already locked.
+Exit status is 12 if the password is incorrect.
+`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if options.timeout > 0 {
 				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
@@ -176,7 +202,18 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	setCommand := &cobra.Command{
 		Use:   "set",
 		Short: "Set keys in the repository based on a recipients file",
-		Long:  "Set command adds missing pubkeys, updates user and host metadata for existing pubkeys, and removes keys that aren't present in the recipients file",
+		Long: `The set command adds missing pubkeys, updates user and host metadata for existing
+pubkeys, and removes keys that aren't present in the recipients file.
+
+EXIT STATUS
+===========
+
+Exit status is 0 if the command was successful.
+Exit status is 1 if there was any error.
+Exit status is 10 if the repository does not exist.
+Exit status is 11 if the repository is already locked.
+Exit status is 12 if the password is incorrect.
+`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if options.timeout > 0 {
 				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
@@ -194,6 +231,17 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	passwordCommand := &cobra.Command{
 		Use:   "password",
 		Short: "Retrieve the password for a key",
+		Long: `The password command decrypts and prints the repository password using an age identity.
+
+EXIT STATUS
+===========
+
+Exit status is 0 if the command was successful.
+Exit status is 1 if there was any error.
+Exit status is 10 if the repository does not exist.
+Exit status is 11 if the repository is already locked.
+Exit status is 12 if the password is incorrect.
+`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if options.timeout > 0 {
 				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
@@ -210,9 +258,20 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	fromPasswordCommand := &cobra.Command{
 		Use:   "from-password",
 		Short: "Retrieve the password for a key",
+		Long: `The from-password command decrypts and prints the password of the repository given by --from-repo.
+
+EXIT STATUS
+===========
+
+Exit status is 0 if the command was successful.
+Exit status is 1 if there was any error.
+Exit status is 10 if the repository does not exist.
+Exit status is 11 if the repository is already locked.
+Exit status is 12 if the password is incorrect.
+`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if options.fromRepo == "" {
-				return errors.New("Fatal: Please specify repository location (--from-repo or RESTIC_FROM_REPOSITORY)") //nolint:staticcheck
+				return errors.Fatal("Please specify repository location (--from-repo or RESTIC_FROM_REPOSITORY)")
 			}
 			options.repo = options.fromRepo
 			if options.timeout > 0 {
@@ -230,6 +289,17 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	repoInitCommand := &cobra.Command{
 		Use:   "repo-init",
 		Short: "Initialize a new repository with an age encrypted key",
+		Long: `The repo-init command creates a new repository whose key is encrypted to one or more age recipients.
+
+EXIT STATUS
+===========
+
+Exit status is 0 if the command was successful.
+Exit status is 1 if there was any error.
+Exit status is 10 if the repository does not exist.
+Exit status is 11 if the repository is already locked.
+Exit status is 12 if the password is incorrect.
+`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if options.timeout > 0 {
 				ctx, cancel := context.WithTimeout(cmd.Context(), options.timeout)
@@ -263,12 +333,29 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 
 func main() {
 	err := newRootCommand().Execute()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
+	if err == nil {
+		return
 	}
 
-	os.Exit(0)
+	fmt.Fprintf(os.Stderr, "%v\n", err)
+	os.Exit(exitCode(err))
+}
+
+// exitCode maps errors to the exit codes documented by restic, so scripts can
+// tell a missing repository from a locked one or a bad password.
+func exitCode(err error) int {
+	switch {
+	case errors.Is(err, errNoRepository):
+		return 10
+	case restic.IsAlreadyLocked(err):
+		return 11
+	case errors.Is(err, repository.ErrNoKeyFound):
+		return 12
+	case errors.Is(err, context.Canceled):
+		return 130
+	default:
+		return 1
+	}
 }
 
 type AgeKey struct {
@@ -306,7 +393,7 @@ type ListKey struct {
 
 func runKeyList(ctx context.Context, opts options, args []string) error {
 	if opts.repo == "" {
-		return errors.New("Fatal: Please specify repository location (-r or --repository-file)") //nolint:staticcheck
+		return errors.Fatal("Please specify repository location (-r or --repository-file)")
 	}
 
 	repo, _, _, err := openRepositoryWithPassword(ctx, opts)
@@ -508,7 +595,7 @@ func buildAndSaveAgeKey(ctx context.Context, recipient, host, user string, encry
 
 func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	if opts.repo == "" {
-		return errors.New("Fatal: Please specify repository location (-r or --repository-file)") //nolint:staticcheck
+		return errors.Fatal("Please specify repository location (-r or --repository-file)")
 	}
 
 	if err := validateOutputPaths(opts.output, []outputInput{
@@ -524,7 +611,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 	}
 
 	if opts.recipient == "" {
-		return errors.New("Fatal: Please specify recipient (--recipient)") //nolint:staticcheck
+		return errors.Fatal("Please specify recipient (--recipient)")
 	}
 	if repo.Key() == nil {
 		return errors.New("repo master key not loaded")
@@ -595,7 +682,7 @@ func runKeyAdd(ctx context.Context, opts options, args []string) error {
 
 func runKeyPassword(ctx context.Context, opts options, args []string) error {
 	if opts.repo == "" {
-		return errors.New("Fatal: Please specify repository location (-r or --repository-file)") //nolint:staticcheck
+		return errors.Fatal("Please specify repository location (-r or --repository-file)")
 	}
 
 	if err := validateOutputPaths(opts.output, []outputInput{
@@ -632,15 +719,15 @@ func runKeyPassword(ctx context.Context, opts options, args []string) error {
 
 func runRepoInit(ctx context.Context, opts options, args []string) error {
 	if opts.repo == "" {
-		return errors.New("Fatal: Please specify repository location (-r or --repo)") //nolint:staticcheck
+		return errors.Fatal("Please specify repository location (-r or --repo)")
 	}
 
 	if opts.recipient == "" && opts.recipientsFile == "" {
-		return errors.New("Fatal: Please specify recipient (--recipient) or recipients file (--recipients-file)") //nolint:staticcheck
+		return errors.Fatal("Please specify recipient (--recipient) or recipients file (--recipients-file)")
 	}
 
 	if opts.recipient != "" && opts.recipientsFile != "" {
-		return errors.New("Fatal: Cannot specify both --recipient and --recipients-file") //nolint:staticcheck
+		return errors.Fatal("Cannot specify both --recipient and --recipients-file")
 	}
 	if err := validateOutputPaths(opts.output, []outputInput{
 		{flag: "--identity-file", path: opts.identityFile},
@@ -663,12 +750,12 @@ func runRepoInit(ctx context.Context, opts options, args []string) error {
 		}
 
 		if len(recipients) == 0 {
-			return errors.New("Fatal: Recipients file contains no recipients") //nolint:staticcheck
+			return errors.Fatal("Recipients file contains no recipients")
 		}
 
 		recipients, _, err = prepareSetRecipients(recipients)
 		if err != nil {
-			return fmt.Errorf("Fatal: Invalid recipients file: %w", err) //nolint:staticcheck
+			return errors.Fatalf("Invalid recipients file: %v", err)
 		}
 	}
 
@@ -1294,21 +1381,21 @@ func validateSetInventory(inventory setKeyInventory, recipients []Recipient, opt
 
 func runKeySet(ctx context.Context, opts options, args []string) error {
 	if opts.repo == "" {
-		return errors.New("Fatal: Please specify repository location (-r or --repository-file)") //nolint:staticcheck
+		return errors.Fatal("Please specify repository location (-r or --repository-file)")
 	}
 
 	if opts.recipientsFile == "" {
-		return errors.New("Fatal: Please specify recipients file (--recipients-file)") //nolint:staticcheck
+		return errors.Fatal("Please specify recipients file (--recipients-file)")
 	}
 
 	setRecipients, err := readRecipientsFile(opts.recipientsFile)
 	if err != nil {
-		return fmt.Errorf("Fatal: Unable to read recipients file: %w", err) //nolint:staticcheck
+		return errors.Fatalf("Unable to read recipients file: %v", err)
 	}
 
 	setRecipients, desiredByPubkey, err := prepareSetRecipients(setRecipients)
 	if err != nil {
-		return fmt.Errorf("Fatal: Invalid recipients file: %w", err) //nolint:staticcheck
+		return errors.Fatalf("Invalid recipients file: %v", err)
 	}
 
 	repo, be, currentPassword, err := openRepositoryWithPasswordPreferring(ctx, opts, desiredByPubkey)
@@ -1349,13 +1436,11 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 
 			password, ageData, err := ageEncryptRandomKey(ctx, opts.ageProgram, recipient.Pubkey)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to add key %s: %v\n", recipient.Pubkey, err)
-				return errors.New("failed to set keys")
+				return fmt.Errorf("failed to add key %s: %w", recipient.Pubkey, err)
 			}
 			key, err := prepareAgeKey(recipient.Pubkey, recipient.Host, recipient.User, expectedMaster, encryptedAgePassword{password: password, data: ageData})
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to add key %s: %v\n", recipient.Pubkey, err)
-				return errors.New("failed to set keys")
+				return fmt.Errorf("failed to add key %s: %w", recipient.Pubkey, err)
 			}
 			prepared[spec] = key
 		}
@@ -1516,21 +1601,19 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 			created, err = savePreparedAgeKey(ctx, repo, be, creation.prepared, true, opts.dryRun)
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to add key %s: %v\n", creation.recipient.Pubkey, err)
-			return errors.New("failed to set keys")
+			return fmt.Errorf("failed to add key %s: %w", creation.recipient.Pubkey, err)
 		}
 
 		var verifiedRepo *repository.Repository
 		if !opts.dryRun && password != "" {
 			verifiedRepo, err = verifyKeyAccess(ctx, be, id, password, expectedMaster)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to verify key %s: %v\n", creation.recipient.Pubkey, err)
 				if created {
 					if cleanupErr := cleanupUnverifiedKey(ctx, repo, be, id); cleanupErr != nil {
 						fmt.Fprintf(os.Stderr, "failed to remove unverified key %s: %v\n", id.Str(), cleanupErr)
 					}
 				}
-				return errors.New("failed to set keys")
+				return fmt.Errorf("failed to verify key %s: %w", creation.recipient.Pubkey, err)
 			}
 		}
 
@@ -1555,8 +1638,7 @@ func runKeySet(ctx context.Context, opts options, args []string) error {
 		blockedKeyID = originalKeyID
 	} else if removesCurrentKey && !opts.dryRun {
 		if replacementRepo == nil {
-			fmt.Fprintln(os.Stderr, "Error: refusing to remove key currently used to access repository")
-			return errors.New("failed to set keys")
+			return errors.Fatal("refusing to remove key currently used to access repository")
 		}
 		repoForRemoval = replacementRepo
 		blockedKeyID = replacementRepo.KeyID()
@@ -1684,7 +1766,7 @@ func verifyIdentityKey(ctx context.Context, repo *repository.Repository, id rest
 func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Repository, opts options, preferredPubkeys map[string]Recipient) (string, restic.ID, error) {
 	closeIdentityCommand, err := readIdentityCommand(ctx, &opts)
 	if err != nil {
-		return "", restic.ID{}, fmt.Errorf("Resolving identity failed: %w", err) //nolint:staticcheck
+		return "", restic.ID{}, fmt.Errorf("Resolving identity failed: %w", err) //nolint:staticcheck // matches restic's capitalized message
 	}
 	defer closeIdentityCommand()
 
@@ -1790,6 +1872,7 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 	password, _, err := readPasswordViaIdentityPreferring(ctx, repo, opts, nil)
 	return password, err
 }
+
 func ageEncryptRandomKey(ctx context.Context, ageProgram string, pubkey string) (string, []byte, error) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -1802,7 +1885,7 @@ func ageEncryptRandomKey(ctx context.Context, ageProgram string, pubkey string) 
 	out, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return "", nil, fmt.Errorf("timeout exceeded while encrypting key with age")
+			return "", nil, errors.New("timeout exceeded while encrypting key with age")
 		}
 
 		var exitErr *exec.ExitError
@@ -1826,7 +1909,7 @@ func ageDecryptKey(ctx context.Context, ageProgram string, identityFile string, 
 	out, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("timeout exceeded while decrypting key with age")
+			return "", errors.New("timeout exceeded while decrypting key with age")
 		}
 
 		var exitErr *exec.ExitError
@@ -1870,7 +1953,7 @@ func readIdentityCommand(ctx context.Context, opts *options) (func(), error) {
 	output, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return noop, fmt.Errorf("timeout exceeded while executing identity command")
+			return noop, errors.New("timeout exceeded while executing identity command")
 		}
 		return noop, err
 	}
@@ -1940,7 +2023,7 @@ func readPassword(ctx context.Context, opts *options) (string, error) {
 		output, err := cmd.Output()
 		if err != nil {
 			if ctx.Err() == context.DeadlineExceeded {
-				return "", fmt.Errorf("timeout exceeded while executing password command")
+				return "", errors.New("timeout exceeded while executing password command")
 			}
 			return "", fmt.Errorf("failed to execute password command: %w", err)
 		}
@@ -1974,7 +2057,7 @@ func openRepositoryWithPasswordPreferring(ctx context.Context, opts options, pre
 		}
 
 		if err != nil {
-			return nil, nil, "", fmt.Errorf("Fatal: Resolving password failed: %w", err) //nolint:staticcheck
+			return nil, nil, "", errors.Fatalf("Resolving password failed: %v", err)
 		}
 	}
 
@@ -2083,7 +2166,7 @@ func openRepository(ctx context.Context, opts options) (*repository.Repository, 
 
 	_, err = be.Stat(ctx, backend.Handle{Type: restic.ConfigFile})
 	if be.IsNotExist(err) {
-		return nil, nil, errors.New("repository does not exist: unable to open config file")
+		return nil, nil, fmt.Errorf("%w: unable to open config file", errNoRepository)
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to open config file: %w", err)
