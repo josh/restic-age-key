@@ -72,6 +72,7 @@ type options struct {
 	transport         backend.TransportOptions
 	limits            limiter.Limits
 	dryRun            bool
+	json              bool
 	chunkerPolynomial string
 	ifNotExists       bool
 }
@@ -150,6 +151,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	cmd.PersistentFlags().StringVar(&options.identityFile, "identity-file", options.identityFile, "age identity file (env: RESTIC_AGE_IDENTITY_FILE)")
 	cmd.PersistentFlags().StringVar(&options.identityCommand, "identity-command", options.identityCommand, "age identity command (env: RESTIC_AGE_IDENTITY_COMMAND)")
 	cmd.PersistentFlags().DurationVar(&options.timeout, "timeout", options.timeout, "command timeout (env: RESTIC_AGE_TIMEOUT)")
+	cmd.PersistentFlags().BoolVar(&options.json, "json", false, "set output mode to JSON for commands that support it")
 	cmd.PersistentFlags().StringVar(&options.keyHint, "key-hint", options.keyHint, "key ID of key to try decrypting first (env: RESTIC_KEY_HINT)")
 	cmd.PersistentFlags().StringSliceVarP(&options.extended, "option", "o", nil, "set extended option (key=value, can be specified multiple times)")
 	cmd.PersistentFlags().StringSliceVar(&options.transport.RootCertFilenames, "cacert", options.transport.RootCertFilenames, "file to load root certificates from (env: RESTIC_CACERT)")
@@ -420,13 +422,13 @@ type Recipient struct {
 }
 
 type ListKey struct {
-	ID        string
-	ShortID   string
-	AgePubkey string
-	IsCurrent bool
-	Username  string
-	Hostname  string
-	Created   string
+	IsCurrent bool   `json:"current"`
+	ID        string `json:"id"`
+	ShortID   string `json:"-"`
+	AgePubkey string `json:"agePubkey"`
+	Username  string `json:"userName"`
+	Hostname  string `json:"hostName"`
+	Created   string `json:"created"`
 }
 
 func runKeyList(ctx context.Context, opts options) error {
@@ -478,6 +480,10 @@ func runKeyList(ctx context.Context, opts options) error {
 	})
 	if err != nil {
 		return fmt.Errorf("failed to list repository files: %w", err)
+	}
+
+	if opts.json {
+		return json.NewEncoder(os.Stdout).Encode(keys)
 	}
 
 	headers := []string{" ID", "Age Pubkey", "User", "Host", "Created"}
