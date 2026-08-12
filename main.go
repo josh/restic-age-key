@@ -871,6 +871,7 @@ func runRepoInit(ctx context.Context, opts options) error {
 		}
 
 		if err == nil && state.exists {
+			var existingKeyIDs []restic.ID
 			if opts.recipientsFile != "" {
 				if err := runKeySet(ctx, opts); err != nil {
 					return err
@@ -880,15 +881,52 @@ func runRepoInit(ctx context.Context, opts options) error {
 					return errors.New("repository is incompletely initialized: no age-encrypted keys found")
 				}
 
-				if opts.output != "" {
+				if opts.output != "" || opts.json {
+					// Both ways of reporting key IDs describe the requested
+					// recipient, so a repository without it is an error either
+					// way rather than a listing of unrelated keys.
 					ids, missing := matchingAgeKeyIDs(state.ageKeys, []Recipient{{Pubkey: opts.recipient}})
 					if len(missing) > 0 {
 						return fmt.Errorf("recipient %s is not present in the existing repository", opts.recipient)
 					}
-					if err := writeRepoInitKeyIDs(opts.output, ids); err != nil {
-						return err
+					existingKeyIDs = ids
+
+					if opts.output != "" {
+						if err := writeRepoInitKeyIDs(opts.output, ids); err != nil {
+							return err
+						}
 					}
 				}
+			}
+
+			if opts.json {
+				keyIDs := existingKeyIDs
+				if opts.recipientsFile != "" {
+					// The initial inspection skipped the keys because set was
+					// about to rewrite them; read the reconciled set instead of
+					// reporting a shape without ageKeyIds.
+					reconciled, err := inspectRepository(ctx, opts, true)
+					if err != nil {
+						return err
+					}
+					for _, ageKey := range reconciled.ageKeys {
+						keyIDs = append(keyIDs, ageKey.ID)
+					}
+				}
+
+				// The repository is never decrypted on this path, so its ID is
+				// unknown; report what is known rather than nothing at all.
+				status := repoInitSuccess{
+					MessageType: "already_initialized",
+					Repository:  repositoryDisplayLocation(opts.repo),
+				}
+				for _, keyID := range keyIDs {
+					status.AgeKeyIDs = append(status.AgeKeyIDs, keyID.String())
+				}
+				if err := json.NewEncoder(os.Stdout).Encode(status); err != nil {
+					return fmt.Errorf("failed to write JSON output: %w", err)
+				}
+				return nil
 			}
 
 			fmt.Fprintf(os.Stderr, "repository already initialized at %s\n", repositoryDisplayLocation(opts.repo))
@@ -1002,34 +1040,50 @@ func runRepoInit(ctx context.Context, opts options) error {
 		return fmt.Errorf("failed to remove temporary password key: %w", err)
 	}
 
-	// restic init prints Config().ID[:10]; Str() would show only 8 characters.
-	fmt.Fprintf(os.Stderr, "created restic repository %s at %s\n", repoID.String()[:10], repositoryDisplayLocation(opts.repo))
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Please note that knowledge of your age identity is required to access")
-	fmt.Fprintln(os.Stderr, "the repository. Losing your identity means that your data is")
-	fmt.Fprintln(os.Stderr, "irrecoverably lost.")
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "repository version: 2")
-
-	if opts.recipientsFile != "" {
-		for i, ageKeyID := range ageKeyIDs {
-			host := recipients[i].Host
-			if host == "" {
-				host = opts.host
-			}
-			user := recipients[i].User
-			if user == "" {
-				user = opts.user
-			}
-			fmt.Fprintf(os.Stderr, "  age key %s for %s@%s\n", ageKeyID.Str(), user, host)
-		}
-	} else {
-		fmt.Fprintf(os.Stderr, "  age key %s for %s@%s\n", ageKeyIDs[0].Str(), opts.user, opts.host)
-	}
-
+	// Write the requested file before reporting success, so a failure here
+	// cannot follow a machine-readable "initialized" document.
 	if opts.output != "" {
 		if err := writeRepoInitKeyIDs(opts.output, ageKeyIDs); err != nil {
 			return err
+		}
+	}
+
+	if opts.json {
+		status := repoInitSuccess{
+			MessageType: "initialized",
+			ID:          repoID.String(),
+			Repository:  repositoryDisplayLocation(opts.repo),
+		}
+		for _, ageKeyID := range ageKeyIDs {
+			status.AgeKeyIDs = append(status.AgeKeyIDs, ageKeyID.String())
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(status); err != nil {
+			return fmt.Errorf("failed to write JSON output: %w", err)
+		}
+	} else {
+		// restic init prints Config().ID[:10]; Str() would show only 8 characters.
+		fmt.Fprintf(os.Stderr, "created restic repository %s at %s\n", repoID.String()[:10], repositoryDisplayLocation(opts.repo))
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Please note that knowledge of your age identity is required to access")
+		fmt.Fprintln(os.Stderr, "the repository. Losing your identity means that your data is")
+		fmt.Fprintln(os.Stderr, "irrecoverably lost.")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "repository version: 2")
+
+		if opts.recipientsFile != "" {
+			for i, ageKeyID := range ageKeyIDs {
+				host := recipients[i].Host
+				if host == "" {
+					host = opts.host
+				}
+				user := recipients[i].User
+				if user == "" {
+					user = opts.user
+				}
+				fmt.Fprintf(os.Stderr, "  age key %s for %s@%s\n", ageKeyID.Str(), user, host)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "  age key %s for %s@%s\n", ageKeyIDs[0].Str(), opts.user, opts.host)
 		}
 	}
 
@@ -2262,6 +2316,15 @@ func openRepositoryWithPasswordPreferring(ctx context.Context, opts options, pre
 	}
 
 	return repo, be, password, nil
+}
+
+// repoInitSuccess mirrors restic's init JSON, extended with the age key IDs
+// this command writes.
+type repoInitSuccess struct {
+	MessageType string   `json:"message_type"` // "initialized" or "already_initialized"
+	ID          string   `json:"id,omitempty"`
+	Repository  string   `json:"repository"`
+	AgeKeyIDs   []string `json:"ageKeyIds,omitempty"`
 }
 
 type repositoryState struct {
