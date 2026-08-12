@@ -49,32 +49,33 @@ var (
 var errNoRepository = errors.New("repository does not exist")
 
 type options struct {
-	ageProgram        string
-	rcloneProgram     string
-	repo              string
-	repositoryFile    string
-	repoResolved      bool
-	fromRepo          string
-	password          string
-	passwordEnv       string
-	passwordFile      string
-	passwordCommand   string
-	identityFile      string
-	identityCommand   string
-	recipient         string
-	recipientsFile    string
-	host              string
-	user              string
-	output            string
-	timeout           time.Duration
-	keyHint           string
-	extended          []string
-	transport         backend.TransportOptions
-	limits            limiter.Limits
-	dryRun            bool
-	json              bool
-	chunkerPolynomial string
-	ifNotExists       bool
+	ageProgram         string
+	rcloneProgram      string
+	repo               string
+	repositoryFile     string
+	repoResolved       bool
+	fromRepo           string
+	password           string
+	passwordEnv        string
+	passwordFile       string
+	passwordCommand    string
+	insecureNoPassword bool
+	identityFile       string
+	identityCommand    string
+	recipient          string
+	recipientsFile     string
+	host               string
+	user               string
+	output             string
+	timeout            time.Duration
+	keyHint            string
+	extended           []string
+	transport          backend.TransportOptions
+	limits             limiter.Limits
+	dryRun             bool
+	json               bool
+	chunkerPolynomial  string
+	ifNotExists        bool
 }
 
 func newRootCommand() *cobra.Command {
@@ -171,6 +172,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		cmd.Flags().StringVar(&options.password, "password", "", "restic repository password (env: RESTIC_PASSWORD)")
 		cmd.Flags().StringVarP(&options.passwordFile, "password-file", "p", options.passwordFile, "restic repository password file (env: RESTIC_PASSWORD_FILE)")
 		cmd.Flags().StringVar(&options.passwordCommand, "password-command", options.passwordCommand, "restic repository password command (env: RESTIC_PASSWORD_COMMAND)")
+		cmd.Flags().BoolVar(&options.insecureNoPassword, "insecure-no-password", false, "use an empty password for the repository, must be passed to every restic command (insecure)")
 	}
 
 	listCommand := &cobra.Command{
@@ -2103,6 +2105,10 @@ func writeTempFile(pattern string, data []byte) (string, func(), error) {
 // then restic's own order applies: the password command beats a password file,
 // which beats RESTIC_PASSWORD.
 func readPassword(ctx context.Context, opts *options) (string, error) {
+	if opts.insecureNoPassword {
+		return "", nil
+	}
+
 	switch {
 	case opts.password != "":
 		return opts.password, nil
@@ -2121,6 +2127,12 @@ func readPassword(ctx context.Context, opts *options) (string, error) {
 // mirroring where restic validates them in global.Options.PreRun. Commands that
 // never consult a password, such as password and from-password, skip it.
 func validatePasswordSources(opts options) error {
+	if opts.insecureNoPassword {
+		if opts.password != "" || opts.passwordEnv != "" || opts.passwordFile != "" || opts.passwordCommand != "" {
+			return errors.Fatal("--insecure-no-password must not be specified together with providing a password via a cli option or environment variable")
+		}
+		return nil
+	}
 	if opts.passwordFile != "" && opts.passwordCommand != "" {
 		return errors.Fatal("Password file and command are mutually exclusive options")
 	}
