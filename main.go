@@ -54,6 +54,7 @@ type options struct {
 	repoResolved      bool
 	fromRepo          string
 	password          string
+	passwordEnv       string
 	passwordFile      string
 	passwordCommand   string
 	identityFile      string
@@ -80,7 +81,7 @@ func newRootCommand() *cobra.Command {
 		repo:              os.Getenv("RESTIC_REPOSITORY"),
 		repositoryFile:    os.Getenv("RESTIC_REPOSITORY_FILE"),
 		fromRepo:          os.Getenv("RESTIC_FROM_REPOSITORY"),
-		password:          os.Getenv("RESTIC_PASSWORD"),
+		passwordEnv:       os.Getenv("RESTIC_PASSWORD"),
 		passwordFile:      os.Getenv("RESTIC_PASSWORD_FILE"),
 		passwordCommand:   os.Getenv("RESTIC_PASSWORD_COMMAND"),
 		identityFile:      os.Getenv("RESTIC_AGE_IDENTITY_FILE"),
@@ -158,9 +159,12 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	cmd.PersistentFlags().IntVar(&options.limits.DownloadKb, "limit-download", 0, "limits downloads to a maximum rate in KiB/s. (default: unlimited)")
 
 	addDecryptRepoCommands := func(cmd *cobra.Command) {
+		cmd.PreRunE = func(*cobra.Command, []string) error {
+			return validatePasswordSources(options)
+		}
 		cmd.Flags().StringVarP(&options.repo, "repo", "r", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
 		cmd.Flags().StringVar(&options.repositoryFile, "repository-file", options.repositoryFile, "file to read the repository location from (env: RESTIC_REPOSITORY_FILE)")
-		cmd.Flags().StringVar(&options.password, "password", options.password, "restic repository password (env: RESTIC_PASSWORD)")
+		cmd.Flags().StringVar(&options.password, "password", "", "restic repository password (env: RESTIC_PASSWORD)")
 		cmd.Flags().StringVarP(&options.passwordFile, "password-file", "p", options.passwordFile, "restic repository password file (env: RESTIC_PASSWORD_FILE)")
 		cmd.Flags().StringVar(&options.passwordCommand, "password-command", options.passwordCommand, "restic repository password command (env: RESTIC_PASSWORD_COMMAND)")
 	}
@@ -316,6 +320,9 @@ Exit status is 12 if the password is incorrect.
 				return runRepoInit(ctx, options)
 			})
 		},
+	}
+	repoInitCommand.PreRunE = func(*cobra.Command, []string) error {
+		return validatePasswordSources(options)
 	}
 	repoInitCommand.Flags().StringVarP(&options.repo, "repo", "r", options.repo, "repository location (env: RESTIC_REPOSITORY)")
 	repoInitCommand.Flags().StringVar(&options.repositoryFile, "repository-file", options.repositoryFile, "file to read the repository location from (env: RESTIC_REPOSITORY_FILE)")
@@ -2058,54 +2065,78 @@ func writeTempFile(pattern string, data []byte) (string, func(), error) {
 	return tmpFile.Name(), closeCallback, nil
 }
 
+// readPassword resolves the repository password. An explicit --password wins,
+// then restic's own order applies: the password command beats a password file,
+// which beats RESTIC_PASSWORD.
 func readPassword(ctx context.Context, opts *options) (string, error) {
-	if opts.password != "" {
+	switch {
+	case opts.password != "":
 		return opts.password, nil
-	} else if opts.passwordFile != "" {
-		s, err := textfile.Read(opts.passwordFile)
-		if err != nil {
-			return "", fmt.Errorf("failed to read password file: %w", err)
-		}
-
-		password := strings.TrimSpace(string(s))
-		if password == "" {
-			return "", errors.New("empty password file")
-		}
-
-		return password, nil
-	} else if opts.passwordCommand != "" {
-		if strings.TrimSpace(opts.passwordCommand) == "" {
-			return "", errors.New("password command is empty")
-		}
-
-		args, err := backend.SplitShellStrings(opts.passwordCommand)
-		if err != nil {
-			return "", err
-		}
-		if len(args) == 0 {
-			return "", errors.New("password command is empty")
-		}
-
-		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-		cmd.Stderr = os.Stderr
-
-		output, err := cmd.Output()
-		if err != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				return "", errors.New("timeout exceeded while executing password command")
-			}
-			return "", fmt.Errorf("failed to execute password command: %w", err)
-		}
-
-		password := strings.TrimSpace(string(output))
-		if password == "" {
-			return "", errors.New("empty password command output")
-		}
-
-		return password, nil
-	} else {
+	case opts.passwordCommand != "":
+		return readPasswordFromCommand(ctx, opts.passwordCommand)
+	case opts.passwordFile != "":
+		return readPasswordFromFile(opts.passwordFile)
+	case opts.passwordEnv != "":
+		return opts.passwordEnv, nil
+	default:
 		return "", errors.New("no password given")
 	}
+}
+
+// validatePasswordSources rejects conflicting sources before a command runs,
+// mirroring where restic validates them in global.Options.PreRun. Commands that
+// never consult a password, such as password and from-password, skip it.
+func validatePasswordSources(opts options) error {
+	if opts.passwordFile != "" && opts.passwordCommand != "" {
+		return errors.Fatal("Password file and command are mutually exclusive options")
+	}
+	return nil
+}
+
+func readPasswordFromFile(passwordFile string) (string, error) {
+	s, err := textfile.Read(passwordFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to read password file: %w", err)
+	}
+
+	password := strings.TrimSpace(string(s))
+	if password == "" {
+		return "", errors.New("empty password file")
+	}
+
+	return password, nil
+}
+
+func readPasswordFromCommand(ctx context.Context, passwordCommand string) (string, error) {
+	if strings.TrimSpace(passwordCommand) == "" {
+		return "", errors.New("password command is empty")
+	}
+
+	args, err := backend.SplitShellStrings(passwordCommand)
+	if err != nil {
+		return "", err
+	}
+	if len(args) == 0 {
+		return "", errors.New("password command is empty")
+	}
+
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Stderr = os.Stderr
+
+	output, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", errors.New("timeout exceeded while executing password command")
+		}
+		return "", fmt.Errorf("failed to execute password command: %w", err)
+	}
+
+	password := strings.TrimSpace(string(output))
+	if password == "" {
+		return "", errors.New("empty password command output")
+	}
+
+	return password, nil
 }
 
 func openRepositoryWithPassword(ctx context.Context, opts options) (*repository.Repository, backend.Backend, string, error) {
