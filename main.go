@@ -67,6 +67,7 @@ type options struct {
 	user              string
 	output            string
 	timeout           time.Duration
+	retryLock         time.Duration
 	keyHint           string
 	extended          []string
 	transport         backend.TransportOptions
@@ -152,6 +153,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	cmd.PersistentFlags().StringVar(&options.identityCommand, "identity-command", options.identityCommand, "age identity command (env: RESTIC_AGE_IDENTITY_COMMAND)")
 	cmd.PersistentFlags().DurationVar(&options.timeout, "timeout", options.timeout, "command timeout (env: RESTIC_AGE_TIMEOUT)")
 	cmd.PersistentFlags().BoolVar(&options.json, "json", false, "set output mode to JSON for commands that support it")
+	cmd.PersistentFlags().DurationVar(&options.retryLock, "retry-lock", 0, "retry to lock the repository if it is already locked, takes a value like 5m or 2h (default: no retries)")
 	cmd.PersistentFlags().StringVar(&options.keyHint, "key-hint", options.keyHint, "key ID of key to try decrypting first (env: RESTIC_KEY_HINT)")
 	cmd.PersistentFlags().StringSliceVarP(&options.extended, "option", "o", nil, "set extended option (key=value, can be specified multiple times)")
 	cmd.PersistentFlags().StringSliceVar(&options.transport.RootCertFilenames, "cacert", options.transport.RootCertFilenames, "file to load root certificates from (env: RESTIC_CACERT)")
@@ -704,7 +706,7 @@ func runKeyAdd(ctx context.Context, opts options) error {
 	}
 
 	if !opts.dryRun {
-		unlocker, lockedCtx, err := repository.Lock(ctx, repo, false, 0, func(string) {}, backendErrorLog)
+		unlocker, lockedCtx, err := repository.Lock(ctx, repo, false, opts.retryLock, lockRetryLog, backendErrorLog)
 		if err != nil {
 			return fmt.Errorf("failed to lock repository: %w", err)
 		}
@@ -1530,7 +1532,7 @@ func runKeySet(ctx context.Context, opts options) error {
 			break
 		}
 
-		locked, lockedCtx, err := repository.Lock(ctx, repo, true, 0, func(string) {}, backendErrorLog)
+		locked, lockedCtx, err := repository.Lock(ctx, repo, true, opts.retryLock, lockRetryLog, backendErrorLog)
 		if err != nil {
 			return fmt.Errorf("failed to lock repository: %w", err)
 		}
@@ -2418,6 +2420,12 @@ func wrapBackend(be backend.Backend) backend.Backend {
 
 func repositoryDisplayLocation(repo string) string {
 	return location.StripPassword(all.Backends(), repo)
+}
+
+// lockRetryLog reports why the repository is still locked while --retry-lock
+// waits, instead of leaving the caller staring at a silent command.
+func lockRetryLog(msg string) {
+	fmt.Fprintln(os.Stderr, msg)
 }
 
 func backendErrorLog(msg string, args ...interface{}) {

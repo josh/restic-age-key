@@ -1,0 +1,35 @@
+# --retry-lock is accepted like restic's, and does not disturb an uncontended
+# repository. The waiting behaviour itself needs two concurrent processes, which
+# testscript cannot arrange deterministically, so it is verified by hand.
+
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+exec restic init
+
+exec restic key list --retry-lock 5s
+exec restic-age-key add --retry-lock 5s --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+stderr 'Add key'
+
+exec restic-age-key set --retry-lock 5s --recipients-file recipients.json
+stderr 'Add key age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw'
+
+exec restic-age-key list --retry-lock 5s
+stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
+
+# An uncontended lock is taken immediately, with no waiting message.
+! stderr 'already locked'
+
+# Bad durations are rejected by the flag parser, as in restic.
+! exec restic key list --retry-lock nonsense
+! exec restic-age-key list --retry-lock nonsense
+! stdout .
+stderr 'invalid argument'
+
+-- password.txt --
+secret
+
+-- recipients.json --
+[
+    { "user": "alice", "pubkey": "age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7" },
+    { "user": "bob", "pubkey": "age1g5wluv38nl0vj6p3f7slgq6x4fxexwaqpqt3nctgs9n8jqf6g9wq5ywxfw" }
+]
