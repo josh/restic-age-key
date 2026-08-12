@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"os/user"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/josh/restic-api/api/backend"
@@ -364,12 +366,16 @@ func runCommand(cmd *cobra.Command, args []string, timeout time.Duration, fn fun
 }
 
 func main() {
-	err := newRootCommand().Execute()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	err := newRootCommand().ExecuteContext(ctx)
 	if err == nil {
 		return
 	}
 
 	fmt.Fprintf(os.Stderr, "%v\n", err)
+	stop()
 	os.Exit(exitCode(err))
 }
 
@@ -1727,6 +1733,11 @@ func runKeySet(ctx context.Context, opts options) error {
 		}
 
 		if err := repository.RemoveKey(ctx, repoForRemoval, recipient.ID); err != nil {
+			// An interrupt should stop the run and surface the cancellation
+			// rather than failing every remaining removal in turn.
+			if ctx.Err() != nil {
+				return fmt.Errorf("failed to remove key %s: %w", recipient.Pubkey, ctx.Err())
+			}
 			fmt.Fprintf(os.Stderr, "failed to remove key %s: %v\n", recipient.Pubkey, err)
 			hasError = true
 		}
@@ -1918,6 +1929,11 @@ func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Rep
 			}
 			continue
 		}
+		// A cancelled or expired context will fail every remaining candidate,
+		// so report it instead of aggregating it behind an earlier failure.
+		if ctx.Err() != nil {
+			return "", restic.ID{}, err
+		}
 		if strings.Contains(err.Error(), "no identity matched any of the recipients") {
 			continue
 		}
@@ -1949,6 +1965,19 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 	return password, err
 }
 
+// helperContextErr reports why a helper command was killed, so an interrupt or
+// a timeout is not masked by the process exit status the helper returns.
+func helperContextErr(ctx context.Context, timeoutMsg string) error {
+	switch ctx.Err() {
+	case context.DeadlineExceeded:
+		return errors.New(timeoutMsg)
+	case context.Canceled:
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+
 func ageEncryptRandomKey(ctx context.Context, ageProgram string, pubkey string) (string, []byte, error) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -1960,8 +1989,8 @@ func ageEncryptRandomKey(ctx context.Context, ageProgram string, pubkey string) 
 
 	out, err := cmd.Output()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", nil, errors.New("timeout exceeded while encrypting key with age")
+		if cerr := helperContextErr(ctx, "timeout exceeded while encrypting key with age"); cerr != nil {
+			return "", nil, cerr
 		}
 
 		var exitErr *exec.ExitError
@@ -1984,8 +2013,8 @@ func ageDecryptKey(ctx context.Context, ageProgram string, identityFile string, 
 
 	out, err := cmd.Output()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", errors.New("timeout exceeded while decrypting key with age")
+		if cerr := helperContextErr(ctx, "timeout exceeded while decrypting key with age"); cerr != nil {
+			return "", cerr
 		}
 
 		var exitErr *exec.ExitError
@@ -2028,8 +2057,8 @@ func readIdentityCommand(ctx context.Context, opts *options) (func(), error) {
 
 	output, err := cmd.Output()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return noop, errors.New("timeout exceeded while executing identity command")
+		if cerr := helperContextErr(ctx, "timeout exceeded while executing identity command"); cerr != nil {
+			return noop, cerr
 		}
 		return noop, err
 	}
@@ -2125,8 +2154,8 @@ func readPasswordFromCommand(ctx context.Context, passwordCommand string) (strin
 
 	output, err := cmd.Output()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", errors.New("timeout exceeded while executing password command")
+		if cerr := helperContextErr(ctx, "timeout exceeded while executing password command"); cerr != nil {
+			return "", cerr
 		}
 		return "", fmt.Errorf("failed to execute password command: %w", err)
 	}
