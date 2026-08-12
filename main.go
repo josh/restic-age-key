@@ -49,6 +49,8 @@ type options struct {
 	ageProgram        string
 	rcloneProgram     string
 	repo              string
+	repositoryFile    string
+	repoResolved      bool
 	fromRepo          string
 	password          string
 	passwordFile      string
@@ -71,6 +73,7 @@ func newRootCommand() *cobra.Command {
 		ageProgram:        AgeProgram,
 		rcloneProgram:     RcloneProgram,
 		repo:              os.Getenv("RESTIC_REPOSITORY"),
+		repositoryFile:    os.Getenv("RESTIC_REPOSITORY_FILE"),
 		fromRepo:          os.Getenv("RESTIC_FROM_REPOSITORY"),
 		password:          os.Getenv("RESTIC_PASSWORD"),
 		passwordFile:      os.Getenv("RESTIC_PASSWORD_FILE"),
@@ -134,9 +137,10 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 	cmd.PersistentFlags().DurationVar(&options.timeout, "timeout", options.timeout, "command timeout (env: RESTIC_AGE_TIMEOUT)")
 
 	addDecryptRepoCommands := func(cmd *cobra.Command) {
-		cmd.Flags().StringVar(&options.repo, "repo", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
+		cmd.Flags().StringVarP(&options.repo, "repo", "r", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
+		cmd.Flags().StringVar(&options.repositoryFile, "repository-file", options.repositoryFile, "file to read the repository location from (env: RESTIC_REPOSITORY_FILE)")
 		cmd.Flags().StringVar(&options.password, "password", options.password, "restic repository password (env: RESTIC_PASSWORD)")
-		cmd.Flags().StringVar(&options.passwordFile, "password-file", options.passwordFile, "restic repository password file (env: RESTIC_PASSWORD_FILE)")
+		cmd.Flags().StringVarP(&options.passwordFile, "password-file", "p", options.passwordFile, "restic repository password file (env: RESTIC_PASSWORD_FILE)")
 		cmd.Flags().StringVar(&options.passwordCommand, "password-command", options.passwordCommand, "restic repository password command (env: RESTIC_PASSWORD_COMMAND)")
 	}
 
@@ -238,7 +242,8 @@ Exit status is 12 if the password is incorrect.
 			})
 		},
 	}
-	passwordCommand.Flags().StringVar(&options.repo, "repo", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
+	passwordCommand.Flags().StringVarP(&options.repo, "repo", "r", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
+	passwordCommand.Flags().StringVar(&options.repositoryFile, "repository-file", options.repositoryFile, "file to read the repository location from (env: RESTIC_REPOSITORY_FILE)")
 	passwordCommand.Flags().StringVar(&options.output, "output", "", "output file to write password to")
 
 	fromPasswordCommand := &cobra.Command{
@@ -262,6 +267,7 @@ Exit status is 12 if the password is incorrect.
 					return errors.Fatal("Please specify repository location (--from-repo or RESTIC_FROM_REPOSITORY)")
 				}
 				options.repo = options.fromRepo
+				options.repoResolved = true
 				return runKeyPassword(ctx, options)
 			})
 		},
@@ -291,6 +297,7 @@ Exit status is 12 if the password is incorrect.
 		},
 	}
 	repoInitCommand.Flags().StringVarP(&options.repo, "repo", "r", options.repo, "repository location (env: RESTIC_REPOSITORY)")
+	repoInitCommand.Flags().StringVar(&options.repositoryFile, "repository-file", options.repositoryFile, "file to read the repository location from (env: RESTIC_REPOSITORY_FILE)")
 	repoInitCommand.Flags().StringVar(&options.recipient, "recipient", options.recipient, "age recipient public key (env: RESTIC_AGE_RECIPIENT)")
 	repoInitCommand.Flags().StringVar(&options.recipientsFile, "recipients-file", options.recipientsFile, "file containing age recipient public keys (env: RESTIC_AGE_RECIPIENTS_FILE)")
 	repoInitCommand.Flags().StringVar(&options.user, "user", options.user, "username for key (env: RESTIC_AGE_USER)")
@@ -389,8 +396,8 @@ type ListKey struct {
 }
 
 func runKeyList(ctx context.Context, opts options) error {
-	if opts.repo == "" {
-		return errors.Fatal("Please specify repository location (-r or --repository-file)")
+	if err := resolveRepo(&opts); err != nil {
+		return err
 	}
 
 	repo, be, _, err := openRepositoryWithPassword(ctx, opts)
@@ -612,12 +619,13 @@ func buildAndSaveAgeKey(ctx context.Context, recipient, host, user string, encry
 }
 
 func runKeyAdd(ctx context.Context, opts options) error {
-	if opts.repo == "" {
-		return errors.Fatal("Please specify repository location (-r or --repository-file)")
+	if err := resolveRepo(&opts); err != nil {
+		return err
 	}
 
 	if err := validateOutputPaths(opts.output, []outputInput{
 		{flag: "--identity-file", path: opts.identityFile},
+		{flag: "--repository-file", path: opts.repositoryFile},
 		{flag: "--password-file", path: opts.passwordFile},
 	}); err != nil {
 		return err
@@ -702,12 +710,13 @@ func runKeyAdd(ctx context.Context, opts options) error {
 }
 
 func runKeyPassword(ctx context.Context, opts options) error {
-	if opts.repo == "" {
-		return errors.Fatal("Please specify repository location (-r or --repository-file)")
+	if err := resolveRepo(&opts); err != nil {
+		return err
 	}
 
 	if err := validateOutputPaths(opts.output, []outputInput{
 		{flag: "--identity-file", path: opts.identityFile},
+		{flag: "--repository-file", path: opts.repositoryFile},
 	}); err != nil {
 		return err
 	}
@@ -739,8 +748,8 @@ func runKeyPassword(ctx context.Context, opts options) error {
 }
 
 func runRepoInit(ctx context.Context, opts options) error {
-	if opts.repo == "" {
-		return errors.Fatal("Please specify repository location (-r or --repo)")
+	if err := resolveRepo(&opts); err != nil {
+		return err
 	}
 
 	if opts.recipient == "" && opts.recipientsFile == "" {
@@ -752,6 +761,7 @@ func runRepoInit(ctx context.Context, opts options) error {
 	}
 	if err := validateOutputPaths(opts.output, []outputInput{
 		{flag: "--identity-file", path: opts.identityFile},
+		{flag: "--repository-file", path: opts.repositoryFile},
 		{flag: "--recipients-file", path: opts.recipientsFile},
 		{flag: "--password-file", path: opts.passwordFile},
 	}); err != nil {
@@ -1404,8 +1414,8 @@ func validateSetInventory(inventory setKeyInventory, recipients []Recipient, opt
 }
 
 func runKeySet(ctx context.Context, opts options) error {
-	if opts.repo == "" {
-		return errors.Fatal("Please specify repository location (-r or --repository-file)")
+	if err := resolveRepo(&opts); err != nil {
+		return err
 	}
 
 	if opts.recipientsFile == "" {
@@ -2181,6 +2191,37 @@ func inspectRepository(ctx context.Context, opts options, loadAgeKeys bool) (rep
 		return ageKeys[i].ID.String() < ageKeys[j].ID.String()
 	})
 	return repositoryState{exists: true, ageKeys: ageKeys}, nil
+}
+
+// resolveRepo mirrors restic's handling of -r and --repository-file, so a
+// repository configured for restic works here without change.
+func resolveRepo(opts *options) error {
+	if opts.repoResolved {
+		return nil
+	}
+	opts.repoResolved = true
+
+	if opts.repo == "" && opts.repositoryFile == "" {
+		return errors.Fatal("Please specify repository location (-r or --repository-file)")
+	}
+
+	if opts.repositoryFile == "" {
+		return nil
+	}
+	if opts.repo != "" {
+		return errors.Fatal("Options -r and --repository-file are mutually exclusive, please specify only one")
+	}
+
+	s, err := textfile.Read(opts.repositoryFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return errors.Fatalf("%s does not exist", opts.repositoryFile)
+	}
+	if err != nil {
+		return err
+	}
+
+	opts.repo = strings.TrimSpace(string(s))
+	return nil
 }
 
 func openRepository(ctx context.Context, opts options) (*repository.Repository, backend.Backend, error) {

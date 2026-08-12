@@ -12,6 +12,20 @@ cp $WORK/password.txt $WORK/password-before.txt
 stderr 'output must not refer to the same file as --password-file'
 cmp $WORK/password.txt $WORK/password-before.txt
 
+cp $WORK/repofile.txt $WORK/repofile-before.txt
+env RESTIC_REPOSITORY=
+! exec restic-age-key password --repository-file $WORK/repofile.txt --identity-file $WORK/key.txt --output $WORK/repofile.txt
+stderr 'output must not refer to the same file as --repository-file'
+cmp $WORK/repofile.txt $WORK/repofile-before.txt
+
+# The same holds when the location comes from the environment.
+env RESTIC_REPOSITORY_FILE=$WORK/repofile.txt
+! exec restic-age-key password --identity-file $WORK/key.txt --output $WORK/repofile.txt
+stderr 'output must not refer to the same file as --repository-file'
+cmp $WORK/repofile.txt $WORK/repofile-before.txt
+env RESTIC_REPOSITORY_FILE=
+env RESTIC_REPOSITORY=$WORK/repo
+
 exec restic-age-key list --password-file $WORK/password.txt
 stdout -count=1 age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
 
@@ -21,6 +35,9 @@ stdout '^[a-f0-9]{64}\n$'
 env RESTIC_PASSWORD_FILE=$WORK/restic-password.txt
 exec restic-age-key password --identity-file $WORK/key.txt --output $WORK/restic-password.txt
 grep '^[a-f0-9]{64}$' $WORK/restic-password.txt
+
+-- repofile.txt --
+repo
 
 -- password.txt --
 secret

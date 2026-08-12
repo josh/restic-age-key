@@ -71,6 +71,9 @@ export RESTIC_AGE_IDENTITY_FILE=/path/to/key.txt
 restic backup
 ```
 
+The repository can also be given with `-r`, or read from a file with
+`--repository-file` / `RESTIC_REPOSITORY_FILE`, just like restic.
+
 Should you need to recover your password without `restic-age-key`, you can use a few standard unix tools.
 
 ```sh
