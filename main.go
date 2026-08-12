@@ -375,7 +375,6 @@ func main() {
 	}
 
 	fmt.Fprintf(os.Stderr, "%v\n", err)
-	stop()
 	os.Exit(exitCode(err))
 }
 
