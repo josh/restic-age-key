@@ -2251,6 +2251,13 @@ func writeTempFile(pattern string, data []byte) (string, func(), error) {
 // then restic's own order applies: the password command beats a password file,
 // which beats RESTIC_PASSWORD.
 func readPassword(ctx context.Context, gopts globalOptions, opts passwordSourceOptions) (string, error) {
+	if gopts.InsecureNoPassword {
+		if opts.password != "" || gopts.PasswordCommand != "" || gopts.PasswordFile != "" || os.Getenv("RESTIC_PASSWORD") != "" {
+			return "", errors.Fatal("--insecure-no-password must not be specified together with providing a password via a cli option or environment variable")
+		}
+		return "", nil
+	}
+
 	switch {
 	case opts.password != "":
 		return opts.password, nil
