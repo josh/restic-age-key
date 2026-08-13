@@ -815,11 +815,11 @@ func runKeyAdd(ctx context.Context, opts addOptions) error {
 	}
 
 	if opts.dryRun {
-		fmt.Fprintf(os.Stderr, "[DRY RUN] Add key %s for %s@%s\n", opts.recipient, opts.user, opts.host)
+		verbosef(opts.globalOptions, "[DRY RUN] Add key %s for %s@%s\n", opts.recipient, opts.user, opts.host)
 		return nil
 	}
 
-	fmt.Fprintf(os.Stderr, "Add key %s for %s@%s\n", opts.recipient, opts.user, opts.host)
+	verbosef(opts.globalOptions, "Add key %s for %s@%s\n", opts.recipient, opts.user, opts.host)
 
 	if opts.output != "" {
 		if err := writeOutputFile(opts.output, id.Str()+"\n", "key id"); err != nil {
@@ -976,7 +976,7 @@ func runRepoInit(ctx context.Context, opts repoInitOptions) error {
 				return nil
 			}
 
-			fmt.Fprintf(os.Stderr, "repository already initialized at %s\n", repositoryDisplayLocation(opts.globalOptions))
+			verbosef(opts.globalOptions, "repository already initialized at %s\n", repositoryDisplayLocation(opts.globalOptions))
 			return nil
 		}
 	}
@@ -1108,7 +1108,7 @@ func runRepoInit(ctx context.Context, opts repoInitOptions) error {
 		if err := json.NewEncoder(os.Stdout).Encode(status); err != nil {
 			return fmt.Errorf("failed to write JSON output: %w", err)
 		}
-	} else {
+	} else if !opts.Quiet {
 		// restic init prints Config().ID[:10]; Str() would show only 8 characters.
 		fmt.Fprintf(os.Stderr, "created restic repository %s at %s\n", repoID.String()[:10], repositoryDisplayLocation(opts.globalOptions))
 		fmt.Fprintln(os.Stderr)
@@ -1839,7 +1839,7 @@ func runKeySet(ctx context.Context, opts setOptions) error {
 			}
 		}
 
-		fmt.Fprintf(os.Stderr, "%sAdd key %s for %s@%s\n", logPrefix, creation.recipient.Pubkey, creation.recipient.User, creation.recipient.Host)
+		verbosef(opts.globalOptions, "%sAdd key %s for %s@%s\n", logPrefix, creation.recipient.Pubkey, creation.recipient.User, creation.recipient.Host)
 
 		if verifiedRepo != nil && creation.updatesExisting && creation.existing.ID == originalKeyID {
 			replacementRepo = verifiedRepo
@@ -1877,7 +1877,7 @@ func runKeySet(ctx context.Context, opts setOptions) error {
 			continue
 		}
 
-		fmt.Fprintf(os.Stderr, "%sRemove key %s for %s@%s\n", logPrefix, recipient.Pubkey, recipient.User, recipient.Host)
+		verbosef(opts.globalOptions, "%sRemove key %s for %s@%s\n", logPrefix, recipient.Pubkey, recipient.User, recipient.Host)
 
 		if opts.dryRun {
 			continue
@@ -2599,6 +2599,13 @@ func repositoryDisplayLocation(opts globalOptions) string {
 // waits, instead of leaving the caller staring at a silent command.
 func lockRetryLog(msg string) {
 	fmt.Fprintln(os.Stderr, msg)
+}
+
+func verbosef(gopts globalOptions, format string, args ...interface{}) {
+	if gopts.Quiet {
+		return
+	}
+	fmt.Fprintf(os.Stderr, format, args...)
 }
 
 func backendErrorLog(msg string, args ...interface{}) {
