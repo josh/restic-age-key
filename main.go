@@ -48,100 +48,154 @@ var (
 // file, so the same condition maps to the same exit code.
 var errNoRepository = errors.New("repository does not exist")
 
-type options struct {
-	ageProgram         string
-	rcloneProgram      string
-	repo               string
-	repositoryFile     string
-	repoResolved       bool
-	fromRepo           string
-	fromRepositoryFile string
-	repositoryFileFlag string
-	password           string
-	passwordEnv        string
-	passwordFile       string
-	passwordCommand    string
-	identityFile       string
-	identityCommand    string
-	recipient          string
-	recipientsFile     string
-	host               string
-	user               string
-	output             string
-	timeout            time.Duration
-	retryLock          time.Duration
-	keyHint            string
-	extended           []string
-	transport          backend.TransportOptions
-	limits             limiter.Limits
-	dryRun             bool
-	noLock             bool
-	json               bool
-	chunkerPolynomial  string
-	ifNotExists        bool
+type globalOptions struct {
+	ageProgram      string
+	rcloneProgram   string
+	identityFile    string
+	identityCommand string
+	keyHint         string
+	timeout         time.Duration
+	retryLock       time.Duration
+	extended        []string
+	transport       backend.TransportOptions
+	limits          limiter.Limits
+	noLock          bool
+	json            bool
 }
 
-func newRootCommand() *cobra.Command {
-	options := options{
-		ageProgram:         AgeProgram,
-		rcloneProgram:      RcloneProgram,
-		repo:               os.Getenv("RESTIC_REPOSITORY"),
-		repositoryFile:     os.Getenv("RESTIC_REPOSITORY_FILE"),
-		fromRepo:           os.Getenv("RESTIC_FROM_REPOSITORY"),
-		fromRepositoryFile: os.Getenv("RESTIC_FROM_REPOSITORY_FILE"),
-		repositoryFileFlag: "--repository-file",
-		passwordEnv:        os.Getenv("RESTIC_PASSWORD"),
-		passwordFile:       os.Getenv("RESTIC_PASSWORD_FILE"),
-		passwordCommand:    os.Getenv("RESTIC_PASSWORD_COMMAND"),
-		identityFile:       os.Getenv("RESTIC_AGE_IDENTITY_FILE"),
-		identityCommand:    os.Getenv("RESTIC_AGE_IDENTITY_COMMAND"),
-		recipient:          os.Getenv("RESTIC_AGE_RECIPIENT"),
-		recipientsFile:     os.Getenv("RESTIC_AGE_RECIPIENTS_FILE"),
-		user:               os.Getenv("RESTIC_AGE_USER"),
-		host:               os.Getenv("RESTIC_AGE_HOST"),
-		chunkerPolynomial:  os.Getenv("RESTIC_AGE_CHUNKER_POLYNOMIAL"),
-		keyHint:            os.Getenv("RESTIC_KEY_HINT"),
+type repoOptions struct {
+	repo               string
+	repositoryFile     string
+	repositoryFileFlag string
+	repoResolved       bool
+}
+
+type passwordSourceOptions struct {
+	password        string
+	passwordEnv     string
+	passwordFile    string
+	passwordCommand string
+}
+
+type commonOptions struct {
+	globalOptions
+	repoOptions
+	passwordSourceOptions
+}
+
+type addOptions struct {
+	commonOptions
+	recipient string
+	host      string
+	user      string
+	output    string
+	dryRun    bool
+}
+
+type setOptions struct {
+	commonOptions
+	recipientsFile string
+	host           string
+	user           string
+	// output has no set flag; repo-init --if-not-exists passes its --output through.
+	output string
+	dryRun bool
+}
+
+type passwordOptions struct {
+	globalOptions
+	repoOptions
+	fromRepo           string
+	fromRepositoryFile string
+	output             string
+}
+
+type repoInitOptions struct {
+	commonOptions
+	recipient         string
+	recipientsFile    string
+	host              string
+	user              string
+	chunkerPolynomial string
+	output            string
+	ifNotExists       bool
+}
+
+func defaultGlobalOptions() globalOptions {
+	opts := globalOptions{
+		ageProgram:      AgeProgram,
+		rcloneProgram:   RcloneProgram,
+		identityFile:    os.Getenv("RESTIC_AGE_IDENTITY_FILE"),
+		identityCommand: os.Getenv("RESTIC_AGE_IDENTITY_COMMAND"),
+		keyHint:         os.Getenv("RESTIC_KEY_HINT"),
 	}
 
-	options.transport.TLSClientCertKeyFilename = os.Getenv("RESTIC_TLS_CLIENT_CERT")
-	options.transport.HTTPUserAgent = os.Getenv("RESTIC_HTTP_USER_AGENT")
+	opts.transport.TLSClientCertKeyFilename = os.Getenv("RESTIC_TLS_CLIENT_CERT")
+	opts.transport.HTTPUserAgent = os.Getenv("RESTIC_HTTP_USER_AGENT")
 	if certs := os.Getenv("RESTIC_CACERT"); certs != "" {
-		options.transport.RootCertFilenames = strings.Split(certs, ",")
+		opts.transport.RootCertFilenames = strings.Split(certs, ",")
 	}
 
 	if timeoutStr := os.Getenv("RESTIC_AGE_TIMEOUT"); timeoutStr != "" {
 		if duration, err := time.ParseDuration(timeoutStr); err == nil {
-			options.timeout = duration
+			opts.timeout = duration
 		} else {
 			fmt.Fprintf(os.Stderr, "warn: invalid timeout format in RESTIC_AGE_TIMEOUT: %s\n", err)
 		}
 	}
 
-	if options.host == "" {
-		if hostname, err := os.Hostname(); err == nil {
-			options.host = hostname
-		}
-	}
-
-	if options.user == "" {
-		if user, err := user.Current(); err == nil {
-			options.user = user.Username
-		}
-	}
-
 	if program := os.Getenv("RESTIC_AGE_PROGRAM"); program != "" {
-		options.ageProgram = program
+		opts.ageProgram = program
 	}
 
-	if options.ageProgram == "" || options.ageProgram == "age" {
+	if opts.ageProgram == "" || opts.ageProgram == "age" {
 		if path, err := exec.LookPath("age"); err == nil {
-			options.ageProgram = path
+			opts.ageProgram = path
 		}
 	}
 
-	if options.rcloneProgram == "" || options.rcloneProgram == "rclone" {
+	if opts.rcloneProgram == "" || opts.rcloneProgram == "rclone" {
 		if path, err := exec.LookPath("rclone"); err == nil {
-			options.rcloneProgram = path
+			opts.rcloneProgram = path
+		}
+	}
+
+	return opts
+}
+
+func defaultRepoOptions() repoOptions {
+	return repoOptions{
+		repo:               os.Getenv("RESTIC_REPOSITORY"),
+		repositoryFile:     os.Getenv("RESTIC_REPOSITORY_FILE"),
+		repositoryFileFlag: "--repository-file",
+	}
+}
+
+func defaultCommonOptions() commonOptions {
+	return commonOptions{
+		repoOptions: defaultRepoOptions(),
+		passwordSourceOptions: passwordSourceOptions{
+			passwordEnv:     os.Getenv("RESTIC_PASSWORD"),
+			passwordFile:    os.Getenv("RESTIC_PASSWORD_FILE"),
+			passwordCommand: os.Getenv("RESTIC_PASSWORD_COMMAND"),
+		},
+	}
+}
+
+func newRootCommand() *cobra.Command {
+	gopts := defaultGlobalOptions()
+
+	host := os.Getenv("RESTIC_AGE_HOST")
+	if host == "" {
+		if hostname, err := os.Hostname(); err == nil {
+			host = hostname
+		}
+	}
+
+	username := os.Getenv("RESTIC_AGE_USER")
+	if username == "" {
+		if u, err := user.Current(); err == nil {
+			username = u.Username
 		}
 	}
 
@@ -156,35 +210,36 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		Version:           Version,
 	}
 
-	cmd.PersistentFlags().StringVar(&options.ageProgram, "age-program", options.ageProgram, "path to age binary (env: RESTIC_AGE_PROGRAM)")
-	cmd.PersistentFlags().StringVar(&options.rcloneProgram, "rclone-program", options.rcloneProgram, "path to rclone")
-	cmd.PersistentFlags().StringVar(&options.identityFile, "identity-file", options.identityFile, "age identity file (env: RESTIC_AGE_IDENTITY_FILE)")
-	cmd.PersistentFlags().StringVar(&options.identityCommand, "identity-command", options.identityCommand, "age identity command (env: RESTIC_AGE_IDENTITY_COMMAND)")
-	cmd.PersistentFlags().DurationVar(&options.timeout, "timeout", options.timeout, "command timeout (env: RESTIC_AGE_TIMEOUT)")
-	cmd.PersistentFlags().BoolVar(&options.json, "json", false, "set output mode to JSON for commands that support it")
-	cmd.PersistentFlags().DurationVar(&options.retryLock, "retry-lock", 0, "retry to lock the repository if it is already locked, takes a value like 5m or 2h (default: no retries)")
-	cmd.PersistentFlags().BoolVar(&options.noLock, "no-lock", false, "do not lock the repository, this allows some operations on read-only repositories")
-	cmd.PersistentFlags().StringVar(&options.keyHint, "key-hint", options.keyHint, "key ID of key to try decrypting first (env: RESTIC_KEY_HINT)")
-	cmd.PersistentFlags().StringSliceVarP(&options.extended, "option", "o", nil, "set extended option (key=value, can be specified multiple times)")
-	cmd.PersistentFlags().StringSliceVar(&options.transport.RootCertFilenames, "cacert", options.transport.RootCertFilenames, "file to load root certificates from (env: RESTIC_CACERT)")
-	cmd.PersistentFlags().StringVar(&options.transport.TLSClientCertKeyFilename, "tls-client-cert", options.transport.TLSClientCertKeyFilename, "path to a file containing PEM encoded TLS client certificate and private key (env: RESTIC_TLS_CLIENT_CERT)")
-	cmd.PersistentFlags().BoolVar(&options.transport.InsecureTLS, "insecure-tls", false, "skip TLS certificate verification when connecting to the repository (insecure)")
-	cmd.PersistentFlags().StringVar(&options.transport.HTTPUserAgent, "http-user-agent", options.transport.HTTPUserAgent, "set a http user agent for outgoing http requests (env: RESTIC_HTTP_USER_AGENT)")
-	cmd.PersistentFlags().DurationVar(&options.transport.StuckRequestTimeout, "stuck-request-timeout", 5*time.Minute, "duration after which to retry stuck requests")
-	cmd.PersistentFlags().IntVar(&options.limits.UploadKb, "limit-upload", 0, "limits uploads to a maximum rate in KiB/s. (default: unlimited)")
-	cmd.PersistentFlags().IntVar(&options.limits.DownloadKb, "limit-download", 0, "limits downloads to a maximum rate in KiB/s. (default: unlimited)")
+	cmd.PersistentFlags().StringVar(&gopts.ageProgram, "age-program", gopts.ageProgram, "path to age binary (env: RESTIC_AGE_PROGRAM)")
+	cmd.PersistentFlags().StringVar(&gopts.rcloneProgram, "rclone-program", gopts.rcloneProgram, "path to rclone")
+	cmd.PersistentFlags().StringVar(&gopts.identityFile, "identity-file", gopts.identityFile, "age identity file (env: RESTIC_AGE_IDENTITY_FILE)")
+	cmd.PersistentFlags().StringVar(&gopts.identityCommand, "identity-command", gopts.identityCommand, "age identity command (env: RESTIC_AGE_IDENTITY_COMMAND)")
+	cmd.PersistentFlags().DurationVar(&gopts.timeout, "timeout", gopts.timeout, "command timeout (env: RESTIC_AGE_TIMEOUT)")
+	cmd.PersistentFlags().BoolVar(&gopts.json, "json", false, "set output mode to JSON for commands that support it")
+	cmd.PersistentFlags().DurationVar(&gopts.retryLock, "retry-lock", 0, "retry to lock the repository if it is already locked, takes a value like 5m or 2h (default: no retries)")
+	cmd.PersistentFlags().BoolVar(&gopts.noLock, "no-lock", false, "do not lock the repository, this allows some operations on read-only repositories")
+	cmd.PersistentFlags().StringVar(&gopts.keyHint, "key-hint", gopts.keyHint, "key ID of key to try decrypting first (env: RESTIC_KEY_HINT)")
+	cmd.PersistentFlags().StringSliceVarP(&gopts.extended, "option", "o", nil, "set extended option (key=value, can be specified multiple times)")
+	cmd.PersistentFlags().StringSliceVar(&gopts.transport.RootCertFilenames, "cacert", gopts.transport.RootCertFilenames, "file to load root certificates from (env: RESTIC_CACERT)")
+	cmd.PersistentFlags().StringVar(&gopts.transport.TLSClientCertKeyFilename, "tls-client-cert", gopts.transport.TLSClientCertKeyFilename, "path to a file containing PEM encoded TLS client certificate and private key (env: RESTIC_TLS_CLIENT_CERT)")
+	cmd.PersistentFlags().BoolVar(&gopts.transport.InsecureTLS, "insecure-tls", false, "skip TLS certificate verification when connecting to the repository (insecure)")
+	cmd.PersistentFlags().StringVar(&gopts.transport.HTTPUserAgent, "http-user-agent", gopts.transport.HTTPUserAgent, "set a http user agent for outgoing http requests (env: RESTIC_HTTP_USER_AGENT)")
+	cmd.PersistentFlags().DurationVar(&gopts.transport.StuckRequestTimeout, "stuck-request-timeout", 5*time.Minute, "duration after which to retry stuck requests")
+	cmd.PersistentFlags().IntVar(&gopts.limits.UploadKb, "limit-upload", 0, "limits uploads to a maximum rate in KiB/s. (default: unlimited)")
+	cmd.PersistentFlags().IntVar(&gopts.limits.DownloadKb, "limit-download", 0, "limits downloads to a maximum rate in KiB/s. (default: unlimited)")
 
-	addDecryptRepoCommands := func(cmd *cobra.Command) {
+	addDecryptRepoCommands := func(cmd *cobra.Command, opts *commonOptions) {
 		cmd.PreRunE = func(*cobra.Command, []string) error {
-			return validatePasswordSources(options)
+			return validatePasswordSources(opts.passwordSourceOptions)
 		}
-		cmd.Flags().StringVarP(&options.repo, "repo", "r", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
-		cmd.Flags().StringVar(&options.repositoryFile, "repository-file", options.repositoryFile, "file to read the repository location from (env: RESTIC_REPOSITORY_FILE)")
-		cmd.Flags().StringVar(&options.password, "password", "", "restic repository password (env: RESTIC_PASSWORD)")
-		cmd.Flags().StringVarP(&options.passwordFile, "password-file", "p", options.passwordFile, "restic repository password file (env: RESTIC_PASSWORD_FILE)")
-		cmd.Flags().StringVar(&options.passwordCommand, "password-command", options.passwordCommand, "restic repository password command (env: RESTIC_PASSWORD_COMMAND)")
+		cmd.Flags().StringVarP(&opts.repo, "repo", "r", opts.repo, "restic repository location (env: RESTIC_REPOSITORY)")
+		cmd.Flags().StringVar(&opts.repositoryFile, "repository-file", opts.repositoryFile, "file to read the repository location from (env: RESTIC_REPOSITORY_FILE)")
+		cmd.Flags().StringVar(&opts.password, "password", "", "restic repository password (env: RESTIC_PASSWORD)")
+		cmd.Flags().StringVarP(&opts.passwordFile, "password-file", "p", opts.passwordFile, "restic repository password file (env: RESTIC_PASSWORD_FILE)")
+		cmd.Flags().StringVar(&opts.passwordCommand, "password-command", opts.passwordCommand, "restic repository password command (env: RESTIC_PASSWORD_COMMAND)")
 	}
 
+	listOpts := defaultCommonOptions()
 	listCommand := &cobra.Command{
 		Use:   "list",
 		Short: "List all keys in the repository",
@@ -201,13 +256,21 @@ Exit status is 12 if the password is incorrect.
 `,
 		DisableAutoGenTag: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCommand(cmd, args, options.timeout, func(ctx context.Context) error {
-				return runKeyList(ctx, options)
+			opts := listOpts
+			opts.globalOptions = gopts
+			return runCommand(cmd, args, gopts.timeout, func(ctx context.Context) error {
+				return runKeyList(ctx, opts)
 			})
 		},
 	}
-	addDecryptRepoCommands(listCommand)
+	addDecryptRepoCommands(listCommand, &listOpts)
 
+	addOpts := addOptions{
+		commonOptions: defaultCommonOptions(),
+		recipient:     os.Getenv("RESTIC_AGE_RECIPIENT"),
+		host:          host,
+		user:          username,
+	}
 	addCommand := &cobra.Command{
 		Use:   "add",
 		Short: "Add a new key to the repository",
@@ -224,18 +287,26 @@ Exit status is 12 if the password is incorrect.
 `,
 		DisableAutoGenTag: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCommand(cmd, args, options.timeout, func(ctx context.Context) error {
-				return runKeyAdd(ctx, options)
+			opts := addOpts
+			opts.globalOptions = gopts
+			return runCommand(cmd, args, gopts.timeout, func(ctx context.Context) error {
+				return runKeyAdd(ctx, opts)
 			})
 		},
 	}
-	addDecryptRepoCommands(addCommand)
-	addCommand.Flags().StringVar(&options.recipient, "recipient", options.recipient, "age recipient public key (env: RESTIC_AGE_RECIPIENT)")
-	addCommand.Flags().StringVar(&options.host, "host", options.host, "the hostname for new key")
-	addCommand.Flags().StringVar(&options.user, "user", options.user, "the username for new key")
-	addCommand.Flags().StringVar(&options.output, "output", "", "output file to write key id to")
-	addCommand.Flags().BoolVar(&options.dryRun, "dry-run", false, "do not add key, just show what would be done")
+	addDecryptRepoCommands(addCommand, &addOpts.commonOptions)
+	addCommand.Flags().StringVar(&addOpts.recipient, "recipient", addOpts.recipient, "age recipient public key (env: RESTIC_AGE_RECIPIENT)")
+	addCommand.Flags().StringVar(&addOpts.host, "host", addOpts.host, "the hostname for new key")
+	addCommand.Flags().StringVar(&addOpts.user, "user", addOpts.user, "the username for new key")
+	addCommand.Flags().StringVar(&addOpts.output, "output", "", "output file to write key id to")
+	addCommand.Flags().BoolVar(&addOpts.dryRun, "dry-run", false, "do not add key, just show what would be done")
 
+	setOpts := setOptions{
+		commonOptions:  defaultCommonOptions(),
+		recipientsFile: os.Getenv("RESTIC_AGE_RECIPIENTS_FILE"),
+		host:           host,
+		user:           username,
+	}
 	setCommand := &cobra.Command{
 		Use:   "set",
 		Short: "Set keys in the repository based on a recipients file",
@@ -253,15 +324,18 @@ Exit status is 12 if the password is incorrect.
 `,
 		DisableAutoGenTag: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCommand(cmd, args, options.timeout, func(ctx context.Context) error {
-				return runKeySet(ctx, options)
+			opts := setOpts
+			opts.globalOptions = gopts
+			return runCommand(cmd, args, gopts.timeout, func(ctx context.Context) error {
+				return runKeySet(ctx, opts)
 			})
 		},
 	}
-	addDecryptRepoCommands(setCommand)
-	setCommand.Flags().StringVar(&options.recipientsFile, "recipients-file", options.recipientsFile, "file containing age recipient public keys (env: RESTIC_AGE_RECIPIENTS_FILE)")
-	setCommand.Flags().BoolVar(&options.dryRun, "dry-run", false, "do not add or remove keys, just show what would be done")
+	addDecryptRepoCommands(setCommand, &setOpts.commonOptions)
+	setCommand.Flags().StringVar(&setOpts.recipientsFile, "recipients-file", setOpts.recipientsFile, "file containing age recipient public keys (env: RESTIC_AGE_RECIPIENTS_FILE)")
+	setCommand.Flags().BoolVar(&setOpts.dryRun, "dry-run", false, "do not add or remove keys, just show what would be done")
 
+	passwordOpts := passwordOptions{repoOptions: defaultRepoOptions()}
 	passwordCommand := &cobra.Command{
 		Use:   "password",
 		Short: "Retrieve the password for a key",
@@ -278,15 +352,22 @@ Exit status is 12 if the password is incorrect.
 `,
 		DisableAutoGenTag: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCommand(cmd, args, options.timeout, func(ctx context.Context) error {
-				return runKeyPassword(ctx, options)
+			opts := passwordOpts
+			opts.globalOptions = gopts
+			return runCommand(cmd, args, gopts.timeout, func(ctx context.Context) error {
+				return runKeyPassword(ctx, opts)
 			})
 		},
 	}
-	passwordCommand.Flags().StringVarP(&options.repo, "repo", "r", options.repo, "restic repository location (env: RESTIC_REPOSITORY)")
-	passwordCommand.Flags().StringVar(&options.repositoryFile, "repository-file", options.repositoryFile, "file to read the repository location from (env: RESTIC_REPOSITORY_FILE)")
-	passwordCommand.Flags().StringVar(&options.output, "output", "", "output file to write password to")
+	passwordCommand.Flags().StringVarP(&passwordOpts.repo, "repo", "r", passwordOpts.repo, "restic repository location (env: RESTIC_REPOSITORY)")
+	passwordCommand.Flags().StringVar(&passwordOpts.repositoryFile, "repository-file", passwordOpts.repositoryFile, "file to read the repository location from (env: RESTIC_REPOSITORY_FILE)")
+	passwordCommand.Flags().StringVar(&passwordOpts.output, "output", "", "output file to write password to")
 
+	fromPasswordOpts := passwordOptions{
+		repoOptions:        defaultRepoOptions(),
+		fromRepo:           os.Getenv("RESTIC_FROM_REPOSITORY"),
+		fromRepositoryFile: os.Getenv("RESTIC_FROM_REPOSITORY_FILE"),
+	}
 	fromPasswordCommand := &cobra.Command{
 		Use:   "from-password",
 		Short: "Retrieve the password for a key",
@@ -303,18 +384,28 @@ Exit status is 12 if the password is incorrect.
 `,
 		DisableAutoGenTag: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCommand(cmd, args, options.timeout, func(ctx context.Context) error {
-				if err := resolveFromRepo(&options); err != nil {
+			opts := fromPasswordOpts
+			opts.globalOptions = gopts
+			return runCommand(cmd, args, gopts.timeout, func(ctx context.Context) error {
+				if err := resolveFromRepo(&opts); err != nil {
 					return err
 				}
-				return runKeyPassword(ctx, options)
+				return runKeyPassword(ctx, opts)
 			})
 		},
 	}
-	fromPasswordCommand.Flags().StringVar(&options.fromRepo, "from-repo", options.fromRepo, "restic repository location (env: RESTIC_FROM_REPOSITORY)")
-	fromPasswordCommand.Flags().StringVar(&options.fromRepositoryFile, "from-repository-file", options.fromRepositoryFile, "file from which to read the source repository location (env: RESTIC_FROM_REPOSITORY_FILE)")
-	fromPasswordCommand.Flags().StringVar(&options.output, "output", "", "output file to write password to")
+	fromPasswordCommand.Flags().StringVar(&fromPasswordOpts.fromRepo, "from-repo", fromPasswordOpts.fromRepo, "restic repository location (env: RESTIC_FROM_REPOSITORY)")
+	fromPasswordCommand.Flags().StringVar(&fromPasswordOpts.fromRepositoryFile, "from-repository-file", fromPasswordOpts.fromRepositoryFile, "file from which to read the source repository location (env: RESTIC_FROM_REPOSITORY_FILE)")
+	fromPasswordCommand.Flags().StringVar(&fromPasswordOpts.output, "output", "", "output file to write password to")
 
+	repoInitOpts := repoInitOptions{
+		commonOptions:     defaultCommonOptions(),
+		recipient:         os.Getenv("RESTIC_AGE_RECIPIENT"),
+		recipientsFile:    os.Getenv("RESTIC_AGE_RECIPIENTS_FILE"),
+		host:              host,
+		user:              username,
+		chunkerPolynomial: os.Getenv("RESTIC_AGE_CHUNKER_POLYNOMIAL"),
+	}
 	repoInitCommand := &cobra.Command{
 		Use:   "repo-init",
 		Short: "Initialize a new repository with an age encrypted key",
@@ -331,23 +422,25 @@ Exit status is 12 if the password is incorrect.
 `,
 		DisableAutoGenTag: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCommand(cmd, args, options.timeout, func(ctx context.Context) error {
-				return runRepoInit(ctx, options)
+			opts := repoInitOpts
+			opts.globalOptions = gopts
+			return runCommand(cmd, args, gopts.timeout, func(ctx context.Context) error {
+				return runRepoInit(ctx, opts)
 			})
 		},
 	}
 	repoInitCommand.PreRunE = func(*cobra.Command, []string) error {
-		return validatePasswordSources(options)
+		return validatePasswordSources(repoInitOpts.passwordSourceOptions)
 	}
-	repoInitCommand.Flags().StringVarP(&options.repo, "repo", "r", options.repo, "repository location (env: RESTIC_REPOSITORY)")
-	repoInitCommand.Flags().StringVar(&options.repositoryFile, "repository-file", options.repositoryFile, "file to read the repository location from (env: RESTIC_REPOSITORY_FILE)")
-	repoInitCommand.Flags().StringVar(&options.recipient, "recipient", options.recipient, "age recipient public key (env: RESTIC_AGE_RECIPIENT)")
-	repoInitCommand.Flags().StringVar(&options.recipientsFile, "recipients-file", options.recipientsFile, "file containing age recipient public keys (env: RESTIC_AGE_RECIPIENTS_FILE)")
-	repoInitCommand.Flags().StringVar(&options.user, "user", options.user, "username for key (env: RESTIC_AGE_USER)")
-	repoInitCommand.Flags().StringVar(&options.host, "host", options.host, "hostname for key (env: RESTIC_AGE_HOST)")
-	repoInitCommand.Flags().StringVar(&options.chunkerPolynomial, "chunker-polynomial", options.chunkerPolynomial, "chunker polynomial in hex format (e.g. 0x3DA3358B4DC173) (env: RESTIC_AGE_CHUNKER_POLYNOMIAL)")
-	repoInitCommand.Flags().StringVar(&options.output, "output", "", "output file to write key ID to")
-	repoInitCommand.Flags().BoolVar(&options.ifNotExists, "if-not-exists", false, "succeed if the repository already exists; --recipient is creation-only, while --recipients-file reconciles existing keys")
+	repoInitCommand.Flags().StringVarP(&repoInitOpts.repo, "repo", "r", repoInitOpts.repo, "repository location (env: RESTIC_REPOSITORY)")
+	repoInitCommand.Flags().StringVar(&repoInitOpts.repositoryFile, "repository-file", repoInitOpts.repositoryFile, "file to read the repository location from (env: RESTIC_REPOSITORY_FILE)")
+	repoInitCommand.Flags().StringVar(&repoInitOpts.recipient, "recipient", repoInitOpts.recipient, "age recipient public key (env: RESTIC_AGE_RECIPIENT)")
+	repoInitCommand.Flags().StringVar(&repoInitOpts.recipientsFile, "recipients-file", repoInitOpts.recipientsFile, "file containing age recipient public keys (env: RESTIC_AGE_RECIPIENTS_FILE)")
+	repoInitCommand.Flags().StringVar(&repoInitOpts.user, "user", repoInitOpts.user, "username for key (env: RESTIC_AGE_USER)")
+	repoInitCommand.Flags().StringVar(&repoInitOpts.host, "host", repoInitOpts.host, "hostname for key (env: RESTIC_AGE_HOST)")
+	repoInitCommand.Flags().StringVar(&repoInitOpts.chunkerPolynomial, "chunker-polynomial", repoInitOpts.chunkerPolynomial, "chunker polynomial in hex format (e.g. 0x3DA3358B4DC173) (env: RESTIC_AGE_CHUNKER_POLYNOMIAL)")
+	repoInitCommand.Flags().StringVar(&repoInitOpts.output, "output", "", "output file to write key ID to")
+	repoInitCommand.Flags().BoolVar(&repoInitOpts.ifNotExists, "if-not-exists", false, "succeed if the repository already exists; --recipient is creation-only, while --recipients-file reconciles existing keys")
 
 	cmd.AddCommand(
 		listCommand,
@@ -441,8 +534,8 @@ type ListKey struct {
 	Created   string `json:"created"`
 }
 
-func runKeyList(ctx context.Context, opts options) error {
-	if err := resolveRepo(&opts); err != nil {
+func runKeyList(ctx context.Context, opts commonOptions) error {
+	if err := resolveRepo(&opts.repoOptions); err != nil {
 		return err
 	}
 
@@ -699,8 +792,8 @@ func buildAndSaveAgeKey(ctx context.Context, recipient, host, user string, encry
 	return key.id, key.password, nil
 }
 
-func runKeyAdd(ctx context.Context, opts options) error {
-	if err := resolveRepo(&opts); err != nil {
+func runKeyAdd(ctx context.Context, opts addOptions) error {
+	if err := resolveRepo(&opts.repoOptions); err != nil {
 		return err
 	}
 
@@ -712,7 +805,7 @@ func runKeyAdd(ctx context.Context, opts options) error {
 		return err
 	}
 
-	repo, be, currentPassword, err := openRepositoryWithPassword(ctx, opts)
+	repo, be, currentPassword, err := openRepositoryWithPassword(ctx, opts.commonOptions)
 	if err != nil {
 		return err
 	}
@@ -785,8 +878,8 @@ func runKeyAdd(ctx context.Context, opts options) error {
 	return nil
 }
 
-func runKeyPassword(ctx context.Context, opts options) error {
-	if err := resolveRepo(&opts); err != nil {
+func runKeyPassword(ctx context.Context, opts passwordOptions) error {
+	if err := resolveRepo(&opts.repoOptions); err != nil {
 		return err
 	}
 
@@ -813,8 +906,8 @@ func runKeyPassword(ctx context.Context, opts options) error {
 	return nil
 }
 
-func runRepoInit(ctx context.Context, opts options) error {
-	if err := resolveRepo(&opts); err != nil {
+func runRepoInit(ctx context.Context, opts repoInitOptions) error {
+	if err := resolveRepo(&opts.repoOptions); err != nil {
 		return err
 	}
 
@@ -869,7 +962,13 @@ func runRepoInit(ctx context.Context, opts options) error {
 		if err == nil && state.exists {
 			var existingKeyIDs []restic.ID
 			if opts.recipientsFile != "" {
-				if err := runKeySet(ctx, opts); err != nil {
+				if err := runKeySet(ctx, setOptions{
+					commonOptions:  opts.commonOptions,
+					recipientsFile: opts.recipientsFile,
+					host:           opts.host,
+					user:           opts.user,
+					output:         opts.output,
+				}); err != nil {
 					return err
 				}
 			} else {
@@ -1236,7 +1335,7 @@ func parseChunkerPolynomial(hexStr string) (*chunker.Pol, error) {
 	return &pol, nil
 }
 
-func getChunkerPolynomial(opts options) (*chunker.Pol, error) {
+func getChunkerPolynomial(opts repoInitOptions) (*chunker.Pol, error) {
 	pol, err := parseChunkerPolynomial(opts.chunkerPolynomial)
 	if err != nil {
 		return nil, err
@@ -1253,8 +1352,8 @@ func getChunkerPolynomial(opts options) (*chunker.Pol, error) {
 	return &randomPol, nil
 }
 
-func initializeRepository(ctx context.Context, opts options, password string, pol *chunker.Pol) (*repository.Repository, backend.Backend, restic.ID, error) {
-	be, err := createOrOpenBackend(ctx, opts, true)
+func initializeRepository(ctx context.Context, opts repoInitOptions, password string, pol *chunker.Pol) (*repository.Repository, backend.Backend, restic.ID, error) {
+	be, err := createOrOpenBackend(ctx, opts.globalOptions, opts.repo, true)
 	if err != nil {
 		return nil, nil, restic.ID{}, err
 	}
@@ -1417,7 +1516,7 @@ func recipientKeySpec(recipient Recipient) setKeySpec {
 	}
 }
 
-func resolveNewSetRecipient(recipient Recipient, opts options) (Recipient, error) {
+func resolveNewSetRecipient(recipient Recipient, opts setOptions) (Recipient, error) {
 	if recipient.Host == "" {
 		recipient.Host = opts.host
 	}
@@ -1500,7 +1599,7 @@ func inspectSetKeys(ctx context.Context, repo *repository.Repository) (setKeyInv
 	return inventory, nil
 }
 
-func validateSetInventory(inventory setKeyInventory, recipients []Recipient, opts options, prepared map[setKeySpec]preparedAgeKey) error {
+func validateSetInventory(inventory setKeyInventory, recipients []Recipient, opts setOptions, prepared map[setKeySpec]preparedAgeKey) error {
 	repairIDs := make(map[restic.ID]struct{})
 
 	for _, desired := range recipients {
@@ -1547,8 +1646,8 @@ func validateSetInventory(inventory setKeyInventory, recipients []Recipient, opt
 	return nil
 }
 
-func runKeySet(ctx context.Context, opts options) error {
-	if err := resolveRepo(&opts); err != nil {
+func runKeySet(ctx context.Context, opts setOptions) error {
+	if err := resolveRepo(&opts.repoOptions); err != nil {
 		return err
 	}
 
@@ -1566,7 +1665,7 @@ func runKeySet(ctx context.Context, opts options) error {
 		return errors.Fatalf("Invalid recipients file: %v", err)
 	}
 
-	repo, be, currentPassword, err := openRepositoryWithPasswordPreferring(ctx, opts, desiredByPubkey)
+	repo, be, currentPassword, err := openRepositoryWithPasswordPreferring(ctx, opts.commonOptions, desiredByPubkey)
 	if err != nil {
 		return err
 	}
@@ -1945,7 +2044,7 @@ func matchesKeyHint(keyHint string, id restic.ID) bool {
 	return keyHint != "" && strings.HasPrefix(id.String(), keyHint)
 }
 
-func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Repository, opts options, preferredPubkeys map[string]Recipient) (string, restic.ID, error) {
+func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Repository, opts globalOptions, preferredPubkeys map[string]Recipient) (string, restic.ID, error) {
 	closeIdentityCommand, err := readIdentityCommand(ctx, &opts)
 	if err != nil {
 		return "", restic.ID{}, fmt.Errorf("Resolving identity failed: %w", err) //nolint:staticcheck // matches restic's capitalized message
@@ -2052,8 +2151,8 @@ func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Rep
 	return "", restic.ID{}, errors.New("no password found")
 }
 
-func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) {
-	repo, be, err := openRepository(ctx, opts)
+func readPasswordViaIdentity(ctx context.Context, opts passwordOptions) (string, error) {
+	repo, be, err := openRepository(ctx, opts.globalOptions, opts.repo)
 	if err != nil {
 		return "", err
 	}
@@ -2061,7 +2160,7 @@ func readPasswordViaIdentity(ctx context.Context, opts options) (string, error) 
 		_ = be.Close()
 	}()
 
-	password, _, err := readPasswordViaIdentityPreferring(ctx, repo, opts, nil)
+	password, _, err := readPasswordViaIdentityPreferring(ctx, repo, opts.globalOptions, nil)
 	return password, err
 }
 
@@ -2130,7 +2229,7 @@ func ageDecryptKey(ctx context.Context, ageProgram string, identityFile string, 
 	return hex.EncodeToString(out), nil
 }
 
-func readIdentityCommand(ctx context.Context, opts *options) (func(), error) {
+func readIdentityCommand(ctx context.Context, opts *globalOptions) (func(), error) {
 	noop := func() {}
 
 	if opts.identityCommand == "" {
@@ -2199,7 +2298,7 @@ func writeTempFile(pattern string, data []byte) (string, func(), error) {
 // readPassword resolves the repository password. An explicit --password wins,
 // then restic's own order applies: the password command beats a password file,
 // which beats RESTIC_PASSWORD.
-func readPassword(ctx context.Context, opts *options) (string, error) {
+func readPassword(ctx context.Context, opts passwordSourceOptions) (string, error) {
 	switch {
 	case opts.password != "":
 		return opts.password, nil
@@ -2217,7 +2316,7 @@ func readPassword(ctx context.Context, opts *options) (string, error) {
 // validatePasswordSources rejects conflicting sources before a command runs,
 // mirroring where restic validates them in global.Options.PreRun. Commands that
 // never consult a password, such as password and from-password, skip it.
-func validatePasswordSources(opts options) error {
+func validatePasswordSources(opts passwordSourceOptions) error {
 	if opts.passwordFile != "" && opts.passwordCommand != "" {
 		return errors.Fatal("Password file and command are mutually exclusive options")
 	}
@@ -2270,21 +2369,21 @@ func readPasswordFromCommand(ctx context.Context, passwordCommand string) (strin
 	return password, nil
 }
 
-func openRepositoryWithPassword(ctx context.Context, opts options) (*repository.Repository, backend.Backend, string, error) {
+func openRepositoryWithPassword(ctx context.Context, opts commonOptions) (*repository.Repository, backend.Backend, string, error) {
 	return openRepositoryWithPasswordPreferring(ctx, opts, nil)
 }
 
-func openRepositoryWithPasswordPreferring(ctx context.Context, opts options, preferredPubkeys map[string]Recipient) (*repository.Repository, backend.Backend, string, error) {
-	repo, be, err := openRepository(ctx, opts)
+func openRepositoryWithPasswordPreferring(ctx context.Context, opts commonOptions, preferredPubkeys map[string]Recipient) (*repository.Repository, backend.Backend, string, error) {
+	repo, be, err := openRepository(ctx, opts.globalOptions, opts.repo)
 	if err != nil {
 		return nil, nil, "", err
 	}
 
 	var identityKeyID restic.ID
-	password, err := readPassword(ctx, &opts)
+	password, err := readPassword(ctx, opts.passwordSourceOptions)
 	if err != nil {
 		if opts.identityFile != "" || opts.identityCommand != "" {
-			password, identityKeyID, err = readPasswordViaIdentityPreferring(ctx, repo, opts, preferredPubkeys)
+			password, identityKeyID, err = readPasswordViaIdentityPreferring(ctx, repo, opts.globalOptions, preferredPubkeys)
 		}
 
 		if err != nil {
@@ -2329,8 +2428,8 @@ type repositoryState struct {
 	ageKeys []Recipient
 }
 
-func inspectRepository(ctx context.Context, opts options, loadAgeKeys bool) (repositoryState, error) {
-	be, err := createOrOpenBackend(ctx, opts, false)
+func inspectRepository(ctx context.Context, opts repoInitOptions, loadAgeKeys bool) (repositoryState, error) {
+	be, err := createOrOpenBackend(ctx, opts.globalOptions, opts.repo, false)
 	if err != nil {
 		if errors.Is(err, backend.ErrNoRepository) {
 			return repositoryState{}, nil
@@ -2400,7 +2499,7 @@ func inspectRepository(ctx context.Context, opts options, loadAgeKeys bool) (rep
 // repository configured for restic works here without change.
 // resolveFromRepo mirrors restic's source-repository handling, so a repository
 // configured for restic copy resolves the same way here.
-func resolveFromRepo(opts *options) error {
+func resolveFromRepo(opts *passwordOptions) error {
 	if opts.fromRepo == "" && opts.fromRepositoryFile == "" {
 		return errors.Fatal("Please specify a source repository location (--from-repo or --from-repository-file)")
 	}
@@ -2412,10 +2511,10 @@ func resolveFromRepo(opts *options) error {
 	opts.repositoryFile = opts.fromRepositoryFile
 	opts.repositoryFileFlag = "--from-repository-file"
 	opts.repoResolved = false
-	return resolveRepo(opts)
+	return resolveRepo(&opts.repoOptions)
 }
 
-func resolveRepo(opts *options) error {
+func resolveRepo(opts *repoOptions) error {
 	if opts.repoResolved {
 		return nil
 	}
@@ -2444,8 +2543,8 @@ func resolveRepo(opts *options) error {
 	return nil
 }
 
-func openRepository(ctx context.Context, opts options) (*repository.Repository, backend.Backend, error) {
-	be, err := createOrOpenBackend(ctx, opts, false)
+func openRepository(ctx context.Context, opts globalOptions, repo string) (*repository.Repository, backend.Backend, error) {
+	be, err := createOrOpenBackend(ctx, opts, repo, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2469,10 +2568,10 @@ func openRepository(ctx context.Context, opts options) (*repository.Repository, 
 	return r, be, nil
 }
 
-func createOrOpenBackend(ctx context.Context, opts options, create bool) (backend.Backend, error) {
+func createOrOpenBackend(ctx context.Context, opts globalOptions, repo string, create bool) (backend.Backend, error) {
 	backends := all.Backends()
 
-	loc, err := location.Parse(backends, opts.repo)
+	loc, err := location.Parse(backends, repo)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse repository location: %w", err)
 	}
