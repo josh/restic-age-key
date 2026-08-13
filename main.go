@@ -918,7 +918,7 @@ func runRepoInit(ctx context.Context, opts options) error {
 		preflight = []Recipient{{Pubkey: opts.recipient}}
 	}
 	encryptedPasswords := make(map[string]encryptedAgePassword, len(preflight))
-	for _, recipient := range preflight {
+	for i, recipient := range preflight {
 		host := recipient.Host
 		if host == "" {
 			host = opts.host
@@ -934,6 +934,8 @@ func runRepoInit(ctx context.Context, opts options) error {
 		if user == "" {
 			return errors.New("username is empty")
 		}
+		preflight[i].Host = host
+		preflight[i].User = user
 
 		password, data, err := ageEncryptRandomKey(ctx, opts.ageProgram, recipient.Pubkey)
 		if err != nil {
@@ -953,13 +955,20 @@ func runRepoInit(ctx context.Context, opts options) error {
 		}
 	}
 
-	var tempPasswordBuf [32]byte
-	if _, err := rand.Read(tempPasswordBuf[:]); err != nil {
-		return fmt.Errorf("failed to generate temporary password: %w", err)
+	keyError := func(pubkey string, err error) error {
+		if opts.recipientsFile != "" {
+			return fmt.Errorf("failed to create age key for %s: %w", pubkey, err)
+		}
+		return fmt.Errorf("failed to create age key: %w", err)
 	}
-	tempPassword := hex.EncodeToString(tempPasswordBuf[:])
 
-	repo, be, repoID, err := initializeRepository(ctx, opts, tempPassword, pol)
+	first := preflight[0]
+	firstEncrypted, ok := encryptedPasswords[first.Pubkey]
+	if !ok {
+		return fmt.Errorf("no validated age encryption for recipient %s", first.Pubkey)
+	}
+
+	repo, be, repoID, err := initializeRepository(ctx, opts, firstEncrypted.password, pol)
 	if err != nil {
 		return err
 	}
@@ -967,55 +976,47 @@ func runRepoInit(ctx context.Context, opts options) error {
 		_ = be.Close()
 	}()
 
-	if err := repo.SearchKey(ctx, tempPassword, 1, ""); err != nil {
+	if err := repo.SearchKey(ctx, firstEncrypted.password, 1, ""); err != nil {
 		return fmt.Errorf("failed to load master key: %w", err)
 	}
 
-	var ageKeyIDs []restic.ID
+	initialKeyID := repo.KeyID()
+	initialData, err := repo.LoadRaw(ctx, restic.KeyFile, initialKeyID)
+	if err != nil {
+		return keyError(first.Pubkey, err)
+	}
+	firstData, err := rewriteAgeKeyFields(initialData, map[string]any{
+		"hostname":   first.Host,
+		"username":   first.User,
+		"age-pubkey": first.Pubkey,
+		"age-data":   firstEncrypted.data,
+	})
+	if err != nil {
+		return keyError(first.Pubkey, err)
+	}
+	firstKey := preparedAgeKey{id: restic.Hash(firstData), raw: firstData, password: firstEncrypted.password}
+	if _, err := savePreparedAgeKey(ctx, repo, be, firstKey, false, false); err != nil {
+		return keyError(first.Pubkey, err)
+	}
+	if err := verifyNewAgeKey(ctx, repo, be, firstKey.id, firstKey.password, *repo.Key()); err != nil {
+		return keyError(first.Pubkey, err)
+	}
 
-	if opts.recipientsFile != "" {
-		for _, recipient := range recipients {
-			host := recipient.Host
-			if host == "" {
-				host = opts.host
-			}
-			user := recipient.User
-			if user == "" {
-				user = opts.user
-			}
+	ageKeyIDs := []restic.ID{firstKey.id}
 
-			encrypted, ok := encryptedPasswords[recipient.Pubkey]
-			if !ok {
-				return fmt.Errorf("no validated age encryption for recipient %s", recipient.Pubkey)
-			}
-			ageKeyID, _, err := buildAndSaveAgeKey(ctx, recipient.Pubkey, host, user, encrypted, repo, be, false)
-			if err != nil {
-				return fmt.Errorf("failed to create age key for %s: %w", recipient.Pubkey, err)
-			}
-			ageKeyIDs = append(ageKeyIDs, ageKeyID)
-		}
-	} else {
-		encrypted, ok := encryptedPasswords[opts.recipient]
+	for _, recipient := range preflight[1:] {
+		encrypted, ok := encryptedPasswords[recipient.Pubkey]
 		if !ok {
-			return fmt.Errorf("no validated age encryption for recipient %s", opts.recipient)
+			return fmt.Errorf("no validated age encryption for recipient %s", recipient.Pubkey)
 		}
-		ageKeyID, _, err := buildAndSaveAgeKey(ctx, opts.recipient, opts.host, opts.user, encrypted, repo, be, false)
+		ageKeyID, _, err := buildAndSaveAgeKey(ctx, recipient.Pubkey, recipient.Host, recipient.User, encrypted, repo, be, false)
 		if err != nil {
-			return fmt.Errorf("failed to create age key: %w", err)
+			return keyError(recipient.Pubkey, err)
 		}
 		ageKeyIDs = append(ageKeyIDs, ageKeyID)
 	}
 
-	err = repo.List(ctx, restic.KeyFile, func(id restic.ID, size int64) error {
-		for _, ageKeyID := range ageKeyIDs {
-			if id.Equal(ageKeyID) {
-				return nil
-			}
-		}
-		h := backend.Handle{Type: restic.KeyFile, Name: id.String()}
-		return be.Remove(ctx, h)
-	})
-	if err != nil {
+	if err := be.Remove(ctx, backend.Handle{Type: restic.KeyFile, Name: initialKeyID.String()}); err != nil {
 		return fmt.Errorf("failed to remove temporary password key: %w", err)
 	}
 
@@ -1308,7 +1309,7 @@ func prepareSetRecipients(recipients []Recipient) ([]Recipient, map[string]Recip
 	return unique, byPubkey, nil
 }
 
-func rewriteAgeKeyMetadata(data []byte, host, user string) ([]byte, error) {
+func rewriteAgeKeyFields(data []byte, updates map[string]any) ([]byte, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return nil, fmt.Errorf("failed to parse age key: %w", err)
@@ -1317,17 +1318,13 @@ func rewriteAgeKeyMetadata(data []byte, host, user string) ([]byte, error) {
 		return nil, errors.New("failed to parse age key: expected JSON object")
 	}
 
-	hostname, err := json.Marshal(host)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal hostname: %w", err)
+	for name, value := range updates {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal %s: %w", name, err)
+		}
+		fields[name] = raw
 	}
-	username, err := json.Marshal(user)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal username: %w", err)
-	}
-
-	fields["hostname"] = hostname
-	fields["username"] = username
 
 	updated, err := json.Marshal(fields)
 	if err != nil {
@@ -1335,6 +1332,10 @@ func rewriteAgeKeyMetadata(data []byte, host, user string) ([]byte, error) {
 	}
 
 	return updated, nil
+}
+
+func rewriteAgeKeyMetadata(data []byte, host, user string) ([]byte, error) {
+	return rewriteAgeKeyFields(data, map[string]any{"hostname": host, "username": user})
 }
 
 func saveUpdatedAgeKey(ctx context.Context, repo *repository.Repository, be backend.Backend, existing storedRecipient, recipient Recipient, dryRun bool) (restic.ID, bool, error) {
