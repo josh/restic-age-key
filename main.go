@@ -29,7 +29,6 @@ import (
 	"github.com/josh/restic-api/api/crypto"
 	"github.com/josh/restic-api/api/errors"
 	"github.com/josh/restic-api/api/global"
-	resticopts "github.com/josh/restic-api/api/options"
 	"github.com/josh/restic-api/api/repository"
 	"github.com/josh/restic-api/api/restic"
 	"github.com/josh/restic-api/api/textfile"
@@ -44,37 +43,22 @@ var (
 	Version       = "1.1.4"
 )
 
-// errNoRepository mirrors restic's sentinel for a missing backend or config
-// file, so the same condition maps to the same exit code.
-var errNoRepository = errors.New("repository does not exist")
-
 type globalOptions struct {
+	global.Options
 	ageProgram      string
 	rcloneProgram   string
 	identityFile    string
 	identityCommand string
-	keyHint         string
 	timeout         time.Duration
-	retryLock       time.Duration
-	extended        []string
-	transport       backend.TransportOptions
-	limits          limiter.Limits
-	noLock          bool
-	json            bool
 }
 
 type repoOptions struct {
-	repo               string
-	repositoryFile     string
 	repositoryFileFlag string
 	repoResolved       bool
 }
 
 type passwordSourceOptions struct {
-	password        string
-	passwordEnv     string
-	passwordFile    string
-	passwordCommand string
+	password string
 }
 
 type commonOptions struct {
@@ -127,14 +111,8 @@ func defaultGlobalOptions() globalOptions {
 		rcloneProgram:   RcloneProgram,
 		identityFile:    os.Getenv("RESTIC_AGE_IDENTITY_FILE"),
 		identityCommand: os.Getenv("RESTIC_AGE_IDENTITY_COMMAND"),
-		keyHint:         os.Getenv("RESTIC_KEY_HINT"),
 	}
-
-	opts.transport.TLSClientCertKeyFilename = os.Getenv("RESTIC_TLS_CLIENT_CERT")
-	opts.transport.HTTPUserAgent = os.Getenv("RESTIC_HTTP_USER_AGENT")
-	if certs := os.Getenv("RESTIC_CACERT"); certs != "" {
-		opts.transport.RootCertFilenames = strings.Split(certs, ",")
-	}
+	opts.Backends = all.Backends()
 
 	if timeoutStr := os.Getenv("RESTIC_AGE_TIMEOUT"); timeoutStr != "" {
 		if duration, err := time.ParseDuration(timeoutStr); err == nil {
@@ -164,22 +142,11 @@ func defaultGlobalOptions() globalOptions {
 }
 
 func defaultRepoOptions() repoOptions {
-	return repoOptions{
-		repo:               os.Getenv("RESTIC_REPOSITORY"),
-		repositoryFile:     os.Getenv("RESTIC_REPOSITORY_FILE"),
-		repositoryFileFlag: "--repository-file",
-	}
+	return repoOptions{repositoryFileFlag: "--repository-file"}
 }
 
 func defaultCommonOptions() commonOptions {
-	return commonOptions{
-		repoOptions: defaultRepoOptions(),
-		passwordSourceOptions: passwordSourceOptions{
-			passwordEnv:     os.Getenv("RESTIC_PASSWORD"),
-			passwordFile:    os.Getenv("RESTIC_PASSWORD_FILE"),
-			passwordCommand: os.Getenv("RESTIC_PASSWORD_COMMAND"),
-		},
-	}
+	return commonOptions{repoOptions: defaultRepoOptions()}
 }
 
 func newRootCommand() *cobra.Command {
@@ -210,33 +177,18 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		Version:           Version,
 	}
 
+	gopts.AddFlags(cmd.PersistentFlags())
 	cmd.PersistentFlags().StringVar(&gopts.ageProgram, "age-program", gopts.ageProgram, "path to age binary (env: RESTIC_AGE_PROGRAM)")
 	cmd.PersistentFlags().StringVar(&gopts.rcloneProgram, "rclone-program", gopts.rcloneProgram, "path to rclone")
 	cmd.PersistentFlags().StringVar(&gopts.identityFile, "identity-file", gopts.identityFile, "age identity file (env: RESTIC_AGE_IDENTITY_FILE)")
 	cmd.PersistentFlags().StringVar(&gopts.identityCommand, "identity-command", gopts.identityCommand, "age identity command (env: RESTIC_AGE_IDENTITY_COMMAND)")
 	cmd.PersistentFlags().DurationVar(&gopts.timeout, "timeout", gopts.timeout, "command timeout (env: RESTIC_AGE_TIMEOUT)")
-	cmd.PersistentFlags().BoolVar(&gopts.json, "json", false, "set output mode to JSON for commands that support it")
-	cmd.PersistentFlags().DurationVar(&gopts.retryLock, "retry-lock", 0, "retry to lock the repository if it is already locked, takes a value like 5m or 2h (default: no retries)")
-	cmd.PersistentFlags().BoolVar(&gopts.noLock, "no-lock", false, "do not lock the repository, this allows some operations on read-only repositories")
-	cmd.PersistentFlags().StringVar(&gopts.keyHint, "key-hint", gopts.keyHint, "key ID of key to try decrypting first (env: RESTIC_KEY_HINT)")
-	cmd.PersistentFlags().StringSliceVarP(&gopts.extended, "option", "o", nil, "set extended option (key=value, can be specified multiple times)")
-	cmd.PersistentFlags().StringSliceVar(&gopts.transport.RootCertFilenames, "cacert", gopts.transport.RootCertFilenames, "file to load root certificates from (env: RESTIC_CACERT)")
-	cmd.PersistentFlags().StringVar(&gopts.transport.TLSClientCertKeyFilename, "tls-client-cert", gopts.transport.TLSClientCertKeyFilename, "path to a file containing PEM encoded TLS client certificate and private key (env: RESTIC_TLS_CLIENT_CERT)")
-	cmd.PersistentFlags().BoolVar(&gopts.transport.InsecureTLS, "insecure-tls", false, "skip TLS certificate verification when connecting to the repository (insecure)")
-	cmd.PersistentFlags().StringVar(&gopts.transport.HTTPUserAgent, "http-user-agent", gopts.transport.HTTPUserAgent, "set a http user agent for outgoing http requests (env: RESTIC_HTTP_USER_AGENT)")
-	cmd.PersistentFlags().DurationVar(&gopts.transport.StuckRequestTimeout, "stuck-request-timeout", 5*time.Minute, "duration after which to retry stuck requests")
-	cmd.PersistentFlags().IntVar(&gopts.limits.UploadKb, "limit-upload", 0, "limits uploads to a maximum rate in KiB/s. (default: unlimited)")
-	cmd.PersistentFlags().IntVar(&gopts.limits.DownloadKb, "limit-download", 0, "limits downloads to a maximum rate in KiB/s. (default: unlimited)")
 
 	addDecryptRepoCommands := func(cmd *cobra.Command, opts *commonOptions) {
 		cmd.PreRunE = func(*cobra.Command, []string) error {
-			return validatePasswordSources(opts.passwordSourceOptions)
+			return validatePasswordSources(gopts)
 		}
-		cmd.Flags().StringVarP(&opts.repo, "repo", "r", opts.repo, "restic repository location (env: RESTIC_REPOSITORY)")
-		cmd.Flags().StringVar(&opts.repositoryFile, "repository-file", opts.repositoryFile, "file to read the repository location from (env: RESTIC_REPOSITORY_FILE)")
 		cmd.Flags().StringVar(&opts.password, "password", "", "restic repository password (env: RESTIC_PASSWORD)")
-		cmd.Flags().StringVarP(&opts.passwordFile, "password-file", "p", opts.passwordFile, "restic repository password file (env: RESTIC_PASSWORD_FILE)")
-		cmd.Flags().StringVar(&opts.passwordCommand, "password-command", opts.passwordCommand, "restic repository password command (env: RESTIC_PASSWORD_COMMAND)")
 	}
 
 	listOpts := defaultCommonOptions()
@@ -258,7 +210,7 @@ Exit status is 12 if the password is incorrect.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := listOpts
 			opts.globalOptions = gopts
-			return runCommand(cmd, args, gopts.timeout, func(ctx context.Context) error {
+			return runCommand(cmd, args, &opts.globalOptions, func(ctx context.Context) error {
 				return runKeyList(ctx, opts)
 			})
 		},
@@ -289,7 +241,7 @@ Exit status is 12 if the password is incorrect.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := addOpts
 			opts.globalOptions = gopts
-			return runCommand(cmd, args, gopts.timeout, func(ctx context.Context) error {
+			return runCommand(cmd, args, &opts.globalOptions, func(ctx context.Context) error {
 				return runKeyAdd(ctx, opts)
 			})
 		},
@@ -326,7 +278,7 @@ Exit status is 12 if the password is incorrect.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := setOpts
 			opts.globalOptions = gopts
-			return runCommand(cmd, args, gopts.timeout, func(ctx context.Context) error {
+			return runCommand(cmd, args, &opts.globalOptions, func(ctx context.Context) error {
 				return runKeySet(ctx, opts)
 			})
 		},
@@ -354,13 +306,11 @@ Exit status is 12 if the password is incorrect.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := passwordOpts
 			opts.globalOptions = gopts
-			return runCommand(cmd, args, gopts.timeout, func(ctx context.Context) error {
+			return runCommand(cmd, args, &opts.globalOptions, func(ctx context.Context) error {
 				return runKeyPassword(ctx, opts)
 			})
 		},
 	}
-	passwordCommand.Flags().StringVarP(&passwordOpts.repo, "repo", "r", passwordOpts.repo, "restic repository location (env: RESTIC_REPOSITORY)")
-	passwordCommand.Flags().StringVar(&passwordOpts.repositoryFile, "repository-file", passwordOpts.repositoryFile, "file to read the repository location from (env: RESTIC_REPOSITORY_FILE)")
 	passwordCommand.Flags().StringVar(&passwordOpts.output, "output", "", "output file to write password to")
 
 	fromPasswordOpts := passwordOptions{
@@ -386,7 +336,7 @@ Exit status is 12 if the password is incorrect.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := fromPasswordOpts
 			opts.globalOptions = gopts
-			return runCommand(cmd, args, gopts.timeout, func(ctx context.Context) error {
+			return runCommand(cmd, args, &opts.globalOptions, func(ctx context.Context) error {
 				if err := resolveFromRepo(&opts); err != nil {
 					return err
 				}
@@ -424,16 +374,14 @@ Exit status is 12 if the password is incorrect.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := repoInitOpts
 			opts.globalOptions = gopts
-			return runCommand(cmd, args, gopts.timeout, func(ctx context.Context) error {
+			return runCommand(cmd, args, &opts.globalOptions, func(ctx context.Context) error {
 				return runRepoInit(ctx, opts)
 			})
 		},
 	}
 	repoInitCommand.PreRunE = func(*cobra.Command, []string) error {
-		return validatePasswordSources(repoInitOpts.passwordSourceOptions)
+		return validatePasswordSources(gopts)
 	}
-	repoInitCommand.Flags().StringVarP(&repoInitOpts.repo, "repo", "r", repoInitOpts.repo, "repository location (env: RESTIC_REPOSITORY)")
-	repoInitCommand.Flags().StringVar(&repoInitOpts.repositoryFile, "repository-file", repoInitOpts.repositoryFile, "file to read the repository location from (env: RESTIC_REPOSITORY_FILE)")
 	repoInitCommand.Flags().StringVar(&repoInitOpts.recipient, "recipient", repoInitOpts.recipient, "age recipient public key (env: RESTIC_AGE_RECIPIENT)")
 	repoInitCommand.Flags().StringVar(&repoInitOpts.recipientsFile, "recipients-file", repoInitOpts.recipientsFile, "file containing age recipient public keys (env: RESTIC_AGE_RECIPIENTS_FILE)")
 	repoInitCommand.Flags().StringVar(&repoInitOpts.user, "user", repoInitOpts.user, "username for key (env: RESTIC_AGE_USER)")
@@ -456,17 +404,21 @@ Exit status is 12 if the password is incorrect.
 
 // runCommand rejects stray positional arguments the way restic does, then runs
 // fn under the configured timeout.
-func runCommand(cmd *cobra.Command, args []string, timeout time.Duration, fn func(context.Context) error) error {
+func runCommand(cmd *cobra.Command, args []string, gopts *globalOptions, fn func(context.Context) error) error {
 	if len(args) > 0 {
 		name := cmd.Name()
 		return fmt.Errorf("the %s command expects no arguments, only options - please see `restic-age-key help %s` for usage and flags", name, name)
 	}
 
-	if timeout <= 0 {
+	if err := gopts.PreRun(false); err != nil {
+		return err
+	}
+
+	if gopts.timeout <= 0 {
 		return fn(cmd.Context())
 	}
 
-	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
+	ctx, cancel := context.WithTimeout(cmd.Context(), gopts.timeout)
 	defer cancel()
 	return fn(ctx)
 }
@@ -488,7 +440,7 @@ func main() {
 // tell a missing repository from a locked one or a bad password.
 func exitCode(err error) int {
 	switch {
-	case errors.Is(err, errNoRepository):
+	case errors.Is(err, global.ErrNoRepository):
 		return 10
 	case restic.IsAlreadyLocked(err):
 		return 11
@@ -535,7 +487,7 @@ type ListKey struct {
 }
 
 func runKeyList(ctx context.Context, opts commonOptions) error {
-	if err := resolveRepo(&opts.repoOptions); err != nil {
+	if err := resolveRepo(&opts.globalOptions, &opts.repoOptions); err != nil {
 		return err
 	}
 
@@ -550,8 +502,8 @@ func runKeyList(ctx context.Context, opts commonOptions) error {
 	// restic's key list holds a non-exclusive lock so a concurrent writer cannot
 	// remove a key midway through the listing. --no-lock skips it, which is what
 	// makes listing a read-only repository possible.
-	if !opts.noLock {
-		unlocker, lockedCtx, err := repository.Lock(ctx, repo, false, opts.retryLock, lockRetryLog, backendErrorLog)
+	if !opts.NoLock {
+		unlocker, lockedCtx, err := repository.Lock(ctx, repo, false, opts.RetryLock, lockRetryLog, backendErrorLog)
 		if err != nil {
 			return fmt.Errorf("failed to lock repository: %w", err)
 		}
@@ -597,7 +549,7 @@ func runKeyList(ctx context.Context, opts commonOptions) error {
 		return fmt.Errorf("failed to list repository files: %w", err)
 	}
 
-	if opts.json {
+	if opts.JSON {
 		return json.NewEncoder(os.Stdout).Encode(keys)
 	}
 
@@ -793,14 +745,14 @@ func buildAndSaveAgeKey(ctx context.Context, recipient, host, user string, encry
 }
 
 func runKeyAdd(ctx context.Context, opts addOptions) error {
-	if err := resolveRepo(&opts.repoOptions); err != nil {
+	if err := resolveRepo(&opts.globalOptions, &opts.repoOptions); err != nil {
 		return err
 	}
 
 	if err := validateOutputPaths(opts.output, []outputInput{
 		{flag: "--identity-file", path: opts.identityFile},
-		{flag: opts.repositoryFileFlag, path: opts.repositoryFile},
-		{flag: "--password-file", path: opts.passwordFile},
+		{flag: opts.repositoryFileFlag, path: opts.RepositoryFile},
+		{flag: "--password-file", path: opts.PasswordFile},
 	}); err != nil {
 		return err
 	}
@@ -839,7 +791,7 @@ func runKeyAdd(ctx context.Context, opts addOptions) error {
 	}
 
 	if !opts.dryRun {
-		unlocker, lockedCtx, err := repository.Lock(ctx, repo, false, opts.retryLock, lockRetryLog, backendErrorLog)
+		unlocker, lockedCtx, err := repository.Lock(ctx, repo, false, opts.RetryLock, lockRetryLog, backendErrorLog)
 		if err != nil {
 			return fmt.Errorf("failed to lock repository: %w", err)
 		}
@@ -863,11 +815,11 @@ func runKeyAdd(ctx context.Context, opts addOptions) error {
 	}
 
 	if opts.dryRun {
-		fmt.Fprintf(os.Stderr, "[DRY RUN] Add key %s for %s@%s\n", opts.recipient, opts.user, opts.host)
+		verbosef(opts.globalOptions, "[DRY RUN] Add key %s for %s@%s\n", opts.recipient, opts.user, opts.host)
 		return nil
 	}
 
-	fmt.Fprintf(os.Stderr, "Add key %s for %s@%s\n", opts.recipient, opts.user, opts.host)
+	verbosef(opts.globalOptions, "Add key %s for %s@%s\n", opts.recipient, opts.user, opts.host)
 
 	if opts.output != "" {
 		if err := writeOutputFile(opts.output, id.Str()+"\n", "key id"); err != nil {
@@ -879,13 +831,13 @@ func runKeyAdd(ctx context.Context, opts addOptions) error {
 }
 
 func runKeyPassword(ctx context.Context, opts passwordOptions) error {
-	if err := resolveRepo(&opts.repoOptions); err != nil {
+	if err := resolveRepo(&opts.globalOptions, &opts.repoOptions); err != nil {
 		return err
 	}
 
 	if err := validateOutputPaths(opts.output, []outputInput{
 		{flag: "--identity-file", path: opts.identityFile},
-		{flag: opts.repositoryFileFlag, path: opts.repositoryFile},
+		{flag: opts.repositoryFileFlag, path: opts.RepositoryFile},
 	}); err != nil {
 		return err
 	}
@@ -907,7 +859,7 @@ func runKeyPassword(ctx context.Context, opts passwordOptions) error {
 }
 
 func runRepoInit(ctx context.Context, opts repoInitOptions) error {
-	if err := resolveRepo(&opts.repoOptions); err != nil {
+	if err := resolveRepo(&opts.globalOptions, &opts.repoOptions); err != nil {
 		return err
 	}
 
@@ -920,9 +872,9 @@ func runRepoInit(ctx context.Context, opts repoInitOptions) error {
 	}
 	if err := validateOutputPaths(opts.output, []outputInput{
 		{flag: "--identity-file", path: opts.identityFile},
-		{flag: opts.repositoryFileFlag, path: opts.repositoryFile},
+		{flag: opts.repositoryFileFlag, path: opts.RepositoryFile},
 		{flag: "--recipients-file", path: opts.recipientsFile},
-		{flag: "--password-file", path: opts.passwordFile},
+		{flag: "--password-file", path: opts.PasswordFile},
 	}); err != nil {
 		return err
 	}
@@ -976,7 +928,7 @@ func runRepoInit(ctx context.Context, opts repoInitOptions) error {
 					return errors.New("repository is incompletely initialized: no age-encrypted keys found")
 				}
 
-				if opts.output != "" || opts.json {
+				if opts.output != "" || opts.JSON {
 					// Both ways of reporting key IDs describe the requested
 					// recipient, so a repository without it is an error either
 					// way rather than a listing of unrelated keys.
@@ -994,7 +946,7 @@ func runRepoInit(ctx context.Context, opts repoInitOptions) error {
 				}
 			}
 
-			if opts.json {
+			if opts.JSON {
 				keyIDs := existingKeyIDs
 				if opts.recipientsFile != "" {
 					// The initial inspection skipped the keys because set was
@@ -1013,7 +965,7 @@ func runRepoInit(ctx context.Context, opts repoInitOptions) error {
 				// unknown; report what is known rather than nothing at all.
 				status := repoInitSuccess{
 					MessageType: "already_initialized",
-					Repository:  repositoryDisplayLocation(opts.repo),
+					Repository:  repositoryDisplayLocation(opts.globalOptions),
 				}
 				for _, keyID := range keyIDs {
 					status.AgeKeyIDs = append(status.AgeKeyIDs, keyID.String())
@@ -1024,7 +976,7 @@ func runRepoInit(ctx context.Context, opts repoInitOptions) error {
 				return nil
 			}
 
-			fmt.Fprintf(os.Stderr, "repository already initialized at %s\n", repositoryDisplayLocation(opts.repo))
+			verbosef(opts.globalOptions, "repository already initialized at %s\n", repositoryDisplayLocation(opts.globalOptions))
 			return nil
 		}
 	}
@@ -1144,11 +1096,11 @@ func runRepoInit(ctx context.Context, opts repoInitOptions) error {
 		}
 	}
 
-	if opts.json {
+	if opts.JSON {
 		status := repoInitSuccess{
 			MessageType: "initialized",
 			ID:          repoID.String(),
-			Repository:  repositoryDisplayLocation(opts.repo),
+			Repository:  repositoryDisplayLocation(opts.globalOptions),
 		}
 		for _, ageKeyID := range ageKeyIDs {
 			status.AgeKeyIDs = append(status.AgeKeyIDs, ageKeyID.String())
@@ -1156,9 +1108,9 @@ func runRepoInit(ctx context.Context, opts repoInitOptions) error {
 		if err := json.NewEncoder(os.Stdout).Encode(status); err != nil {
 			return fmt.Errorf("failed to write JSON output: %w", err)
 		}
-	} else {
+	} else if !opts.Quiet {
 		// restic init prints Config().ID[:10]; Str() would show only 8 characters.
-		fmt.Fprintf(os.Stderr, "created restic repository %s at %s\n", repoID.String()[:10], repositoryDisplayLocation(opts.repo))
+		fmt.Fprintf(os.Stderr, "created restic repository %s at %s\n", repoID.String()[:10], repositoryDisplayLocation(opts.globalOptions))
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Please note that knowledge of your age identity is required to access")
 		fmt.Fprintln(os.Stderr, "the repository. Losing your identity means that your data is")
@@ -1353,7 +1305,7 @@ func getChunkerPolynomial(opts repoInitOptions) (*chunker.Pol, error) {
 }
 
 func initializeRepository(ctx context.Context, opts repoInitOptions, password string, pol *chunker.Pol) (*repository.Repository, backend.Backend, restic.ID, error) {
-	be, err := createOrOpenBackend(ctx, opts.globalOptions, opts.repo, true)
+	be, err := createOrOpenBackend(ctx, opts.globalOptions, true)
 	if err != nil {
 		return nil, nil, restic.ID{}, err
 	}
@@ -1647,7 +1599,7 @@ func validateSetInventory(inventory setKeyInventory, recipients []Recipient, opt
 }
 
 func runKeySet(ctx context.Context, opts setOptions) error {
-	if err := resolveRepo(&opts.repoOptions); err != nil {
+	if err := resolveRepo(&opts.globalOptions, &opts.repoOptions); err != nil {
 		return err
 	}
 
@@ -1724,7 +1676,7 @@ func runKeySet(ctx context.Context, opts setOptions) error {
 			break
 		}
 
-		locked, lockedCtx, err := repository.Lock(ctx, repo, true, opts.retryLock, lockRetryLog, backendErrorLog)
+		locked, lockedCtx, err := repository.Lock(ctx, repo, true, opts.RetryLock, lockRetryLog, backendErrorLog)
 		if err != nil {
 			return fmt.Errorf("failed to lock repository: %w", err)
 		}
@@ -1887,7 +1839,7 @@ func runKeySet(ctx context.Context, opts setOptions) error {
 			}
 		}
 
-		fmt.Fprintf(os.Stderr, "%sAdd key %s for %s@%s\n", logPrefix, creation.recipient.Pubkey, creation.recipient.User, creation.recipient.Host)
+		verbosef(opts.globalOptions, "%sAdd key %s for %s@%s\n", logPrefix, creation.recipient.Pubkey, creation.recipient.User, creation.recipient.Host)
 
 		if verifiedRepo != nil && creation.updatesExisting && creation.existing.ID == originalKeyID {
 			replacementRepo = verifiedRepo
@@ -1925,7 +1877,7 @@ func runKeySet(ctx context.Context, opts setOptions) error {
 			continue
 		}
 
-		fmt.Fprintf(os.Stderr, "%sRemove key %s for %s@%s\n", logPrefix, recipient.Pubkey, recipient.User, recipient.Host)
+		verbosef(opts.globalOptions, "%sRemove key %s for %s@%s\n", logPrefix, recipient.Pubkey, recipient.User, recipient.Host)
 
 		if opts.dryRun {
 			continue
@@ -2098,8 +2050,8 @@ func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Rep
 		if iPreferred != jPreferred {
 			return iPreferred
 		}
-		iHinted := matchesKeyHint(opts.keyHint, candidates[i].id)
-		jHinted := matchesKeyHint(opts.keyHint, candidates[j].id)
+		iHinted := matchesKeyHint(opts.KeyHint, candidates[i].id)
+		jHinted := matchesKeyHint(opts.KeyHint, candidates[j].id)
 		if iHinted != jHinted {
 			return iHinted
 		}
@@ -2152,7 +2104,7 @@ func readPasswordViaIdentityPreferring(ctx context.Context, repo *repository.Rep
 }
 
 func readPasswordViaIdentity(ctx context.Context, opts passwordOptions) (string, error) {
-	repo, be, err := openRepository(ctx, opts.globalOptions, opts.repo)
+	repo, be, err := openRepository(ctx, opts.globalOptions)
 	if err != nil {
 		return "", err
 	}
@@ -2298,16 +2250,20 @@ func writeTempFile(pattern string, data []byte) (string, func(), error) {
 // readPassword resolves the repository password. An explicit --password wins,
 // then restic's own order applies: the password command beats a password file,
 // which beats RESTIC_PASSWORD.
-func readPassword(ctx context.Context, opts passwordSourceOptions) (string, error) {
+func readPassword(ctx context.Context, gopts globalOptions, opts passwordSourceOptions) (string, error) {
+	if gopts.InsecureNoPassword {
+		return "", nil
+	}
+
 	switch {
 	case opts.password != "":
 		return opts.password, nil
-	case opts.passwordCommand != "":
-		return readPasswordFromCommand(ctx, opts.passwordCommand)
-	case opts.passwordFile != "":
-		return readPasswordFromFile(opts.passwordFile)
-	case opts.passwordEnv != "":
-		return opts.passwordEnv, nil
+	case gopts.PasswordCommand != "":
+		return readPasswordFromCommand(ctx, gopts.PasswordCommand)
+	case gopts.PasswordFile != "":
+		return readPasswordFromFile(gopts.PasswordFile)
+	case os.Getenv("RESTIC_PASSWORD") != "":
+		return os.Getenv("RESTIC_PASSWORD"), nil
 	default:
 		return "", errors.New("no password given")
 	}
@@ -2316,8 +2272,8 @@ func readPassword(ctx context.Context, opts passwordSourceOptions) (string, erro
 // validatePasswordSources rejects conflicting sources before a command runs,
 // mirroring where restic validates them in global.Options.PreRun. Commands that
 // never consult a password, such as password and from-password, skip it.
-func validatePasswordSources(opts passwordSourceOptions) error {
-	if opts.passwordFile != "" && opts.passwordCommand != "" {
+func validatePasswordSources(gopts globalOptions) error {
+	if gopts.PasswordFile != "" && gopts.PasswordCommand != "" {
 		return errors.Fatal("Password file and command are mutually exclusive options")
 	}
 	return nil
@@ -2374,13 +2330,18 @@ func openRepositoryWithPassword(ctx context.Context, opts commonOptions) (*repos
 }
 
 func openRepositoryWithPasswordPreferring(ctx context.Context, opts commonOptions, preferredPubkeys map[string]Recipient) (*repository.Repository, backend.Backend, string, error) {
-	repo, be, err := openRepository(ctx, opts.globalOptions, opts.repo)
+	repo, be, err := openRepository(ctx, opts.globalOptions)
 	if err != nil {
 		return nil, nil, "", err
 	}
 
+	if opts.InsecureNoPassword && (opts.password != "" || opts.PasswordCommand != "" || opts.PasswordFile != "" || os.Getenv("RESTIC_PASSWORD") != "") {
+		_ = be.Close()
+		return nil, nil, "", errors.Fatal("--insecure-no-password must not be specified together with providing a password via a cli option or environment variable")
+	}
+
 	var identityKeyID restic.ID
-	password, err := readPassword(ctx, opts.passwordSourceOptions)
+	password, err := readPassword(ctx, opts.globalOptions, opts.passwordSourceOptions)
 	if err != nil {
 		if opts.identityFile != "" || opts.identityCommand != "" {
 			password, identityKeyID, err = readPasswordViaIdentityPreferring(ctx, repo, opts.globalOptions, preferredPubkeys)
@@ -2393,7 +2354,7 @@ func openRepositoryWithPasswordPreferring(ctx context.Context, opts commonOption
 	}
 
 	maxKeys := 20
-	keyHint := opts.keyHint
+	keyHint := opts.KeyHint
 	if identityKeyID != (restic.ID{}) {
 		if repo.KeyID() == identityKeyID {
 			return repo, be, password, nil
@@ -2429,7 +2390,7 @@ type repositoryState struct {
 }
 
 func inspectRepository(ctx context.Context, opts repoInitOptions, loadAgeKeys bool) (repositoryState, error) {
-	be, err := createOrOpenBackend(ctx, opts.globalOptions, opts.repo, false)
+	be, err := createOrOpenBackend(ctx, opts.globalOptions, false)
 	if err != nil {
 		if errors.Is(err, backend.ErrNoRepository) {
 			return repositoryState{}, nil
@@ -2507,44 +2468,44 @@ func resolveFromRepo(opts *passwordOptions) error {
 		return errors.Fatal("Options --from-repo and --from-repository-file are mutually exclusive, please specify only one")
 	}
 
-	opts.repo = opts.fromRepo
-	opts.repositoryFile = opts.fromRepositoryFile
+	opts.Repo = opts.fromRepo
+	opts.RepositoryFile = opts.fromRepositoryFile
 	opts.repositoryFileFlag = "--from-repository-file"
 	opts.repoResolved = false
-	return resolveRepo(&opts.repoOptions)
+	return resolveRepo(&opts.globalOptions, &opts.repoOptions)
 }
 
-func resolveRepo(opts *repoOptions) error {
+func resolveRepo(gopts *globalOptions, opts *repoOptions) error {
 	if opts.repoResolved {
 		return nil
 	}
 	opts.repoResolved = true
 
-	if opts.repo == "" && opts.repositoryFile == "" {
+	if gopts.Repo == "" && gopts.RepositoryFile == "" {
 		return errors.Fatal("Please specify repository location (-r or --repository-file)")
 	}
 
-	if opts.repositoryFile == "" {
+	if gopts.RepositoryFile == "" {
 		return nil
 	}
-	if opts.repo != "" {
+	if gopts.Repo != "" {
 		return errors.Fatal("Options -r and --repository-file are mutually exclusive, please specify only one")
 	}
 
-	s, err := textfile.Read(opts.repositoryFile)
+	s, err := textfile.Read(gopts.RepositoryFile)
 	if errors.Is(err, os.ErrNotExist) {
-		return errors.Fatalf("%s does not exist", opts.repositoryFile)
+		return errors.Fatalf("%s does not exist", gopts.RepositoryFile)
 	}
 	if err != nil {
 		return err
 	}
 
-	opts.repo = strings.TrimSpace(string(s))
+	gopts.Repo = strings.TrimSpace(string(s))
 	return nil
 }
 
-func openRepository(ctx context.Context, opts globalOptions, repo string) (*repository.Repository, backend.Backend, error) {
-	be, err := createOrOpenBackend(ctx, opts, repo, false)
+func openRepository(ctx context.Context, opts globalOptions) (*repository.Repository, backend.Backend, error) {
+	be, err := createOrOpenBackend(ctx, opts, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2558,7 +2519,7 @@ func openRepository(ctx context.Context, opts globalOptions, repo string) (*repo
 	_, err = be.Stat(ctx, backend.Handle{Type: restic.ConfigFile})
 	if be.IsNotExist(err) {
 		_ = be.Close()
-		return nil, nil, fmt.Errorf("%w: unable to open config file", errNoRepository)
+		return nil, nil, fmt.Errorf("%w: unable to open config file", global.ErrNoRepository)
 	}
 	if err != nil {
 		_ = be.Close()
@@ -2568,10 +2529,8 @@ func openRepository(ctx context.Context, opts globalOptions, repo string) (*repo
 	return r, be, nil
 }
 
-func createOrOpenBackend(ctx context.Context, opts globalOptions, repo string, create bool) (backend.Backend, error) {
-	backends := all.Backends()
-
-	loc, err := location.Parse(backends, repo)
+func createOrOpenBackend(ctx context.Context, opts globalOptions, create bool) (backend.Backend, error) {
+	loc, err := location.Parse(opts.Backends, opts.Repo)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse repository location: %w", err)
 	}
@@ -2584,22 +2543,18 @@ func createOrOpenBackend(ctx context.Context, opts globalOptions, repo string, c
 		rcloneCfg.Program = opts.rcloneProgram
 	}
 
-	extended, err := resticopts.Parse(opts.extended)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse extended options: %w", err)
-	}
-	if err := extended.Extract(loc.Scheme).Apply(loc.Scheme, cfg); err != nil {
+	if err := opts.Extended.Extract(loc.Scheme).Apply(loc.Scheme, cfg); err != nil {
 		return nil, fmt.Errorf("failed to apply extended options: %w", err)
 	}
 
-	rt, err := backend.Transport(opts.transport)
+	rt, err := backend.Transport(opts.TransportOptions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create backend transport: %w", err)
 	}
-	lim := limiter.NewStaticLimiter(opts.limits)
+	lim := limiter.NewStaticLimiter(opts.Limits)
 	rt = lim.Transport(rt)
 
-	factory := backends.Lookup(loc.Scheme)
+	factory := opts.Backends.Lookup(loc.Scheme)
 	if factory == nil {
 		return nil, fmt.Errorf("unknown repository backend: %s", loc.Scheme)
 	}
@@ -2638,14 +2593,21 @@ func wrapBackend(be backend.Backend) backend.Backend {
 	return retry.New(be, 15*time.Minute, report, success)
 }
 
-func repositoryDisplayLocation(repo string) string {
-	return location.StripPassword(all.Backends(), repo)
+func repositoryDisplayLocation(opts globalOptions) string {
+	return location.StripPassword(opts.Backends, opts.Repo)
 }
 
 // lockRetryLog reports why the repository is still locked while --retry-lock
 // waits, instead of leaving the caller staring at a silent command.
 func lockRetryLog(msg string) {
 	fmt.Fprintln(os.Stderr, msg)
+}
+
+func verbosef(gopts globalOptions, format string, args ...interface{}) {
+	if gopts.Quiet {
+		return
+	}
+	fmt.Fprintf(os.Stderr, format, args...)
 }
 
 func backendErrorLog(msg string, args ...interface{}) {

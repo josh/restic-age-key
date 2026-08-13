@@ -1,0 +1,27 @@
+env RESTIC_REPOSITORY=$WORK/repo
+env RESTIC_PASSWORD_FILE=$WORK/password.txt
+env RESTIC_AGE_USER=alice
+env RESTIC_AGE_HOST=localhost
+
+exec restic init
+
+exec restic-age-key add --quiet --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+! stderr .
+
+exec restic-age-key list
+stdout age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+
+exec restic-age-key set --quiet --recipients-file recipients.json
+! stderr .
+
+exec restic-age-key list
+stdout bob
+
+exec restic-age-key repo-init --quiet --repo $WORK/repo2 --recipient age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7
+! stderr .
+
+-- password.txt --
+secret
+
+-- recipients.json --
+[{"pubkey":"age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7","user":"bob","host":"localhost"}]
