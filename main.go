@@ -129,6 +129,10 @@ func newRootCommand() *cobra.Command {
 		}
 	}
 
+	if program := os.Getenv("RESTIC_AGE_PROGRAM"); program != "" {
+		options.ageProgram = program
+	}
+
 	if options.ageProgram == "" || options.ageProgram == "age" {
 		if path, err := exec.LookPath("age"); err == nil {
 			options.ageProgram = path
@@ -152,7 +156,7 @@ It supports listing existing keys, adding new keys, and retrieving passwords.`,
 		Version:           Version,
 	}
 
-	cmd.PersistentFlags().StringVar(&options.ageProgram, "age-program", options.ageProgram, "path to age binary")
+	cmd.PersistentFlags().StringVar(&options.ageProgram, "age-program", options.ageProgram, "path to age binary (env: RESTIC_AGE_PROGRAM)")
 	cmd.PersistentFlags().StringVar(&options.rcloneProgram, "rclone-program", options.rcloneProgram, "path to rclone")
 	cmd.PersistentFlags().StringVar(&options.identityFile, "identity-file", options.identityFile, "age identity file (env: RESTIC_AGE_IDENTITY_FILE)")
 	cmd.PersistentFlags().StringVar(&options.identityCommand, "identity-command", options.identityCommand, "age identity command (env: RESTIC_AGE_IDENTITY_COMMAND)")
