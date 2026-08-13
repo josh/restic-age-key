@@ -54,6 +54,10 @@ jobs:
         with:
           go-version: "${{ matrix.go_version }}"
 
+      - name: Tidy
+        run: |
+          go mod tidy -diff
+
       - name: Build
         run: |
           go build
