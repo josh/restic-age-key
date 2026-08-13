@@ -40,7 +40,7 @@ import (
 var (
 	AgeProgram    = "age"
 	RcloneProgram = "rclone"
-	Version       = "1.1.4"
+	Version       = "1.2.0"
 )
 
 type globalOptions struct {
