@@ -2252,9 +2252,6 @@ func writeTempFile(pattern string, data []byte) (string, func(), error) {
 // which beats RESTIC_PASSWORD.
 func readPassword(ctx context.Context, gopts globalOptions, opts passwordSourceOptions) (string, error) {
 	if gopts.InsecureNoPassword {
-		if opts.password != "" || gopts.PasswordCommand != "" || gopts.PasswordFile != "" || os.Getenv("RESTIC_PASSWORD") != "" {
-			return "", errors.Fatal("--insecure-no-password must not be specified together with providing a password via a cli option or environment variable")
-		}
 		return "", nil
 	}
 
@@ -2336,6 +2333,11 @@ func openRepositoryWithPasswordPreferring(ctx context.Context, opts commonOption
 	repo, be, err := openRepository(ctx, opts.globalOptions)
 	if err != nil {
 		return nil, nil, "", err
+	}
+
+	if opts.InsecureNoPassword && (opts.password != "" || opts.PasswordCommand != "" || opts.PasswordFile != "" || os.Getenv("RESTIC_PASSWORD") != "") {
+		_ = be.Close()
+		return nil, nil, "", errors.Fatal("--insecure-no-password must not be specified together with providing a password via a cli option or environment variable")
 	}
 
 	var identityKeyID restic.ID
