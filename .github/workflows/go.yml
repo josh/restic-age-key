@@ -12,20 +12,13 @@ jobs:
     strategy:
       matrix:
         include:
-          # nixos-25.11
-          - age_version: "1.3.1"
-            restic_version: "0.18.1"
-            go_version: "1.25.9"
-
           # nixos-26.05
           - age_version: "1.3.1"
             restic_version: "0.18.1"
-            go_version: "1.26.5"
 
           # nixpkgs-unstable
           - age_version: "1.3.1"
             restic_version: "0.19.1"
-            go_version: "1.26.5"
 
     env:
       AGE_VERSION: "${{ matrix.age_version }}"
@@ -52,7 +45,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "${{ matrix.go_version }}"
+          go-version-file: go.mod
 
       - name: Tidy
         run: |
