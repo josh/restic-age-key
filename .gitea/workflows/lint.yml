@@ -1,0 +1,14 @@
+name: Lint
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go-version:
+    runs-on: ubuntu-slim-amd64
+    steps:
+      - uses: josh/check-nixpkgs-go@8eddf920954415accedbba0f0cdebc90a3ce307a # v1.0.0
