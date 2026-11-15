@@ -3,6 +3,7 @@ env RESTIC_PASSWORD_FILE=$WORK/password.txt
 
 exec restic init
 
+[root] skip 'root ignores file permissions'
 chmod 000 $WORK/repo
 
 ! exec restic-age-key list

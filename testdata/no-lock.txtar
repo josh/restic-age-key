@@ -15,6 +15,7 @@ exec restic-age-key list
 stdout 'age1tmkxjxzan25j6rmjpuffq2ft8z45q75knm356qaypcczvsz4pvds46d9l7'
 
 # A read-only repository can only be listed with --no-lock, exactly as in restic.
+[root] skip 'root ignores file permissions'
 chmod 0500 $WORK/repo/locks
 ! exec restic key list
 ! exec restic-age-key list

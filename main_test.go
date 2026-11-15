@@ -62,6 +62,12 @@ func TestScript(t *testing.T) {
 			"json-set":       scriptJSONSet,
 			"json-del":       scriptJSONDel,
 		},
+		Condition: func(cond string) (bool, error) {
+			if cond == "root" {
+				return os.Geteuid() == 0, nil
+			}
+			return false, fmt.Errorf("unknown condition %q", cond)
+		},
 		Setup: func(env *testscript.Env) error {
 			env.Setenv("RESTIC_CACHE_DIR", filepath.Join(env.WorkDir, ".restic-cache"))
 			return nil
