@@ -26,10 +26,10 @@ import (
 	"github.com/josh/restic-api/api/backend/rclone"
 	"github.com/josh/restic-api/api/backend/retry"
 	"github.com/josh/restic-api/api/backend/sema"
-	"github.com/josh/restic-api/api/crypto"
 	"github.com/josh/restic-api/api/errors"
 	"github.com/josh/restic-api/api/global"
 	"github.com/josh/restic-api/api/repository"
+	"github.com/josh/restic-api/api/repository/crypto"
 	"github.com/josh/restic-api/api/restic"
 	"github.com/josh/restic-api/api/textfile"
 	"github.com/restic/chunker"
@@ -442,7 +442,7 @@ func exitCode(err error) int {
 	switch {
 	case errors.Is(err, global.ErrNoRepository):
 		return 10
-	case restic.IsAlreadyLocked(err):
+	case repository.IsAlreadyLocked(err):
 		return 11
 	case errors.Is(err, repository.ErrNoKeyFound):
 		return 12
@@ -503,11 +503,11 @@ func runKeyList(ctx context.Context, opts commonOptions) error {
 	// remove a key midway through the listing. --no-lock skips it, which is what
 	// makes listing a read-only repository possible.
 	if !opts.NoLock {
-		unlocker, lockedCtx, err := repository.Lock(ctx, repo, false, opts.RetryLock, lockRetryLog, backendErrorLog)
+		unlock, lockedCtx, err := repository.LockRepo(ctx, repo, false, opts.RetryLock, lockRetryLog, backendErrorLog)
 		if err != nil {
 			return fmt.Errorf("failed to lock repository: %w", err)
 		}
-		defer unlocker.Unlock()
+		defer unlock()
 		ctx = lockedCtx
 	}
 
@@ -668,7 +668,7 @@ func savePreparedAgeKey(ctx context.Context, repo *repository.Repository, be bac
 		return false, nil
 	}
 
-	h := backend.Handle{Type: restic.KeyFile, Name: key.id.String()}
+	h := backend.Handle{Type: backend.KeyFile, Name: key.id.String()}
 
 	if adoptExisting {
 		// Probe with Stat rather than Load: the retry backend treats a missing
@@ -791,11 +791,11 @@ func runKeyAdd(ctx context.Context, opts addOptions) error {
 	}
 
 	if !opts.dryRun {
-		unlocker, lockedCtx, err := repository.Lock(ctx, repo, false, opts.RetryLock, lockRetryLog, backendErrorLog)
+		unlock, lockedCtx, err := repository.LockRepo(ctx, repo, false, opts.RetryLock, lockRetryLog, backendErrorLog)
 		if err != nil {
 			return fmt.Errorf("failed to lock repository: %w", err)
 		}
-		defer unlocker.Unlock()
+		defer unlock()
 		ctx = lockedCtx
 
 		if _, err := verifyKeyAccess(ctx, be, originalKeyID, currentPassword, expectedMaster); err != nil {
@@ -1084,7 +1084,7 @@ func runRepoInit(ctx context.Context, opts repoInitOptions) error {
 		ageKeyIDs = append(ageKeyIDs, ageKeyID)
 	}
 
-	if err := be.Remove(ctx, backend.Handle{Type: restic.KeyFile, Name: initialKeyID.String()}); err != nil {
+	if err := be.Remove(ctx, backend.Handle{Type: backend.KeyFile, Name: initialKeyID.String()}); err != nil {
 		return fmt.Errorf("failed to remove temporary password key: %w", err)
 	}
 
@@ -1633,7 +1633,7 @@ func runKeySet(ctx context.Context, opts setOptions) error {
 	prepared := make(map[setKeySpec]preparedAgeKey)
 	var inventory setKeyInventory
 	var operationCtx = ctx
-	var unlocker *repository.Unlocker
+	var unlock func()
 
 	const maxPlanAttempts = 3
 	for attempt := 0; ; attempt++ {
@@ -1676,19 +1676,19 @@ func runKeySet(ctx context.Context, opts setOptions) error {
 			break
 		}
 
-		locked, lockedCtx, err := repository.Lock(ctx, repo, true, opts.RetryLock, lockRetryLog, backendErrorLog)
+		unlockLocked, lockedCtx, err := repository.LockRepo(ctx, repo, true, opts.RetryLock, lockRetryLog, backendErrorLog)
 		if err != nil {
 			return fmt.Errorf("failed to lock repository: %w", err)
 		}
 
 		if _, err := verifyKeyAccess(lockedCtx, be, originalKeyID, currentPassword, expectedMaster); err != nil {
-			locked.Unlock()
+			unlockLocked()
 			return fmt.Errorf("failed to verify repository key after acquiring lock: %w", err)
 		}
 
 		lockedInventory, err := inspectSetKeys(lockedCtx, repo)
 		if err != nil {
-			locked.Unlock()
+			unlockLocked()
 			return fmt.Errorf("failed to inspect repository keys: %w", err)
 		}
 
@@ -1699,7 +1699,7 @@ func runKeySet(ctx context.Context, opts setOptions) error {
 			}
 			recipient, err := resolveNewSetRecipient(desired, opts)
 			if err != nil {
-				locked.Unlock()
+				unlockLocked()
 				return err
 			}
 			if _, ok := prepared[recipientKeySpec(recipient)]; !ok {
@@ -1709,25 +1709,25 @@ func runKeySet(ctx context.Context, opts setOptions) error {
 		}
 
 		if needsPreparation {
-			locked.Unlock()
+			unlockLocked()
 			if attempt+1 >= maxPlanAttempts {
 				return errors.New("repository keys changed while preparing set; retry command")
 			}
 			continue
 		}
 		if err := validateSetInventory(lockedInventory, setRecipients, opts, prepared); err != nil {
-			locked.Unlock()
+			unlockLocked()
 			return fmt.Errorf("failed to inspect repository keys: %w", err)
 		}
 
 		inventory = lockedInventory
 		operationCtx = lockedCtx
-		unlocker = locked
+		unlock = unlockLocked
 		break
 	}
 
-	if unlocker != nil {
-		defer unlocker.Unlock()
+	if unlock != nil {
+		defer unlock()
 	}
 	ctx = operationCtx
 	repoKeys := inventory.recipients
@@ -1956,6 +1956,41 @@ func openIdentityKeyError(id restic.ID, err error) error {
 	}
 }
 
+// openKey checks that password decrypts key id to a valid master key. It
+// mirrors restic's unexported repository.openKey.
+func openKey(ctx context.Context, repo *repository.Repository, id restic.ID, password string) error {
+	k, err := repository.LoadKey(ctx, repo, id)
+	if err != nil {
+		return err
+	}
+	if k.KDF != "scrypt" {
+		return errors.New("only supported KDF is scrypt()")
+	}
+
+	userKey, err := crypto.KDF(crypto.Params{N: k.N, R: k.R, P: k.P}, k.Salt, password)
+	if err != nil {
+		return errors.Wrap(err, "crypto.KDF")
+	}
+	if len(k.Data) < crypto.CiphertextLength(0) {
+		return errors.New("invalid key file, data too short")
+	}
+
+	nonce, ciphertext := k.Data[:userKey.NonceSize()], k.Data[userKey.NonceSize():]
+	buf, err := userKey.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return err
+	}
+
+	var master crypto.Key
+	if err := json.Unmarshal(buf, &master); err != nil {
+		return errors.Wrap(err, "Unmarshal")
+	}
+	if !master.Valid() {
+		return errors.New("Invalid key for repository")
+	}
+	return nil
+}
+
 // verifyIdentityKey checks that password opens key id and that the key belongs
 // to this repository. A repository whose config cannot be read is left
 // unverified so that restic reports the damaged config itself instead of this
@@ -1963,15 +1998,14 @@ func openIdentityKeyError(id restic.ID, err error) error {
 func verifyIdentityKey(ctx context.Context, repo *repository.Repository, id restic.ID, password string, keysComplete bool) error {
 	config, err := repo.LoadRaw(ctx, restic.ConfigFile, restic.ID{})
 	if err != nil || len(config) < crypto.CiphertextLength(0) {
-		_, openErr := repository.OpenKey(ctx, repo, id, password)
+		openErr := openKey(ctx, repo, id, password)
 		return openIdentityKeyError(id, openErr)
 	}
 
-	// SearchKey scans other key files when the hinted key fails to open, and
-	// OpenKey panics on a key file whose data is shorter than a nonce. Opening
-	// the hinted key first keeps that scan from running.
+	// SearchKey scans other key files when the hinted key fails to open.
+	// Opening the hinted key first keeps that scan from running.
 	if !keysComplete {
-		if _, openErr := repository.OpenKey(ctx, repo, id, password); openErr != nil {
+		if openErr := openKey(ctx, repo, id, password); openErr != nil {
 			return openIdentityKeyError(id, openErr)
 		}
 	}
@@ -1981,7 +2015,7 @@ func verifyIdentityKey(ctx context.Context, repo *repository.Repository, id rest
 		return fmt.Errorf("key %s does not open this repository: %w", id.Str(), searchErr)
 	}
 	if searchErr != nil {
-		_, openErr := repository.OpenKey(ctx, repo, id, password)
+		openErr := openKey(ctx, repo, id, password)
 		return openIdentityKeyError(id, openErr)
 	}
 	if openedID := repo.KeyID(); openedID != id {
@@ -2401,7 +2435,7 @@ func inspectRepository(ctx context.Context, opts repoInitOptions, loadAgeKeys bo
 		_ = be.Close()
 	}()
 
-	_, err = be.Stat(ctx, backend.Handle{Type: restic.ConfigFile})
+	_, err = be.Stat(ctx, backend.Handle{Type: backend.ConfigFile})
 	if err != nil {
 		if be.IsNotExist(err) {
 			return repositoryState{}, nil
@@ -2516,7 +2550,7 @@ func openRepository(ctx context.Context, opts globalOptions) (*repository.Reposi
 		return nil, nil, fmt.Errorf("failed to initialize repository: %w", err)
 	}
 
-	_, err = be.Stat(ctx, backend.Handle{Type: restic.ConfigFile})
+	_, err = be.Stat(ctx, backend.Handle{Type: backend.ConfigFile})
 	if be.IsNotExist(err) {
 		_ = be.Close()
 		return nil, nil, fmt.Errorf("%w: unable to open config file", global.ErrNoRepository)
